@@ -1,0 +1,11 @@
+pub mod audio;
+pub mod config;
+pub mod engine;
+pub mod gui;
+pub mod history;
+pub mod input;
+pub mod scenario;
+pub mod text_conversion;
+pub mod transcription;
+pub mod utils;
+pub mod whisper;

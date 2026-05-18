@@ -1,0 +1,24 @@
+[package]
+name = "speaktype"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+eframe = "0.27"
+egui = "0.27"
+cpal = "0.15"
+enigo = "0.1"
+arboard = "3.6"
+whisper-rs = { version = "0.16", features = ["cuda"] }  # CUDA build for local whisper.cpp inference
+tokio = { version = "1", features = ["full"] }
+anyhow = "1.0"
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+reqwest = { version = "0.12", features = ["blocking"] }
+device_query = "2.0"
+rdev = "0.5"
+chrono = { version = "0.4", features = ["serde"] }
+directories = "5.0"
+hound = "3.5"
+ferrous-opencc = "0.4"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }

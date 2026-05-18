@@ -1,0 +1,11 @@
+/target/
+/dist/
+/models/
+/recordings/
+*.bin.part
+*.pdb
+*.ilk
+*.obj
+*.log
+.DS_Store
+Thumbs.db
