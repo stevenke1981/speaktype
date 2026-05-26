@@ -17,8 +17,7 @@ fn main() {
     let options = NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([560.0, 560.0])
-            .with_title("SpeakType")
-            .with_visible(!start_hidden_to_tray),
+            .with_title("SpeakType"),
         ..Default::default()
     };
 

@@ -54,6 +54,15 @@ impl TrayManager {
         let menu_ctx = ctx.clone();
         MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
             if let Some(action) = action_from_menu_id(event.id.as_ref()) {
+                match action {
+                    TrayAction::ShowMain
+                    | TrayAction::ToggleRecording
+                    | TrayAction::OpenSettings
+                    | TrayAction::OpenHistory => restore_main_window(),
+                    TrayAction::Exit => {
+                        std::process::exit(0);
+                    }
+                }
                 let _ = menu_tx.send(action);
                 menu_ctx.request_repaint();
             }
@@ -71,6 +80,7 @@ impl TrayManager {
                 button: MouseButton::Left,
                 ..
             } => {
+                restore_main_window();
                 let _ = tray_tx.send(TrayAction::ShowMain);
                 tray_ctx.request_repaint();
             }
@@ -106,6 +116,84 @@ fn action_from_menu_id(id: &str) -> Option<TrayAction> {
         TRAY_HISTORY => Some(TrayAction::OpenHistory),
         TRAY_EXIT => Some(TrayAction::Exit),
         _ => None,
+    }
+}
+
+#[cfg(windows)]
+fn restore_main_window() {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SetForegroundWindow, ShowWindow, SW_RESTORE,
+    };
+
+    if let Some(hwnd) = current_process_window() {
+        unsafe {
+            ShowWindow(hwnd, SW_RESTORE);
+            SetForegroundWindow(hwnd);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn restore_main_window() {}
+
+#[cfg(windows)]
+pub fn minimize_main_window() {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_MINIMIZE};
+
+    if let Some(hwnd) = current_process_window() {
+        unsafe {
+            ShowWindow(hwnd, SW_MINIMIZE);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub fn minimize_main_window() {}
+
+#[cfg(windows)]
+fn current_process_window() -> Option<windows_sys::Win32::Foundation::HWND> {
+    use windows_sys::Win32::Foundation::{HWND, LPARAM};
+    use windows_sys::Win32::System::Threading::GetCurrentProcessId;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindowThreadProcessId, IsWindowVisible,
+    };
+
+    struct WindowSearch {
+        pid: u32,
+        hwnd: HWND,
+    }
+
+    unsafe extern "system" fn enum_window(hwnd: HWND, lparam: LPARAM) -> i32 {
+        let search = unsafe { &mut *(lparam as *mut WindowSearch) };
+        let mut window_pid = 0;
+        unsafe {
+            GetWindowThreadProcessId(hwnd, &mut window_pid);
+        }
+
+        if window_pid == search.pid && unsafe { IsWindowVisible(hwnd) } != 0 {
+            search.hwnd = hwnd;
+            return 0;
+        }
+
+        1
+    }
+
+    let mut search = WindowSearch {
+        pid: unsafe { GetCurrentProcessId() },
+        hwnd: std::ptr::null_mut(),
+    };
+
+    unsafe {
+        EnumWindows(
+            Some(enum_window),
+            &mut search as *mut WindowSearch as LPARAM,
+        );
+    }
+
+    if search.hwnd.is_null() {
+        None
+    } else {
+        Some(search.hwnd)
     }
 }
 

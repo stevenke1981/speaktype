@@ -18,7 +18,7 @@ use speaktype::modules::paths;
 use speaktype::modules::recordings;
 use speaktype::modules::scenario::{Scenario, ScenarioManager};
 use speaktype::modules::startup;
-use speaktype::modules::tray::{create_tray, TrayAction, TrayManager};
+use speaktype::modules::tray::{create_tray, minimize_main_window, TrayAction, TrayManager};
 use speaktype::modules::utils::device::DeviceStatus;
 use std::fs;
 use std::path::Path;
@@ -55,6 +55,7 @@ pub struct SpeakTypeApp {
     selected_recording_for_retry: Option<std::path::PathBuf>,
     tray: Option<TrayManager>,
     hidden_to_tray: bool,
+    start_minimized_pending: bool,
     restore_guard_until: Option<Instant>,
     exit_requested: bool,
     scenario_manager: ScenarioManager,
@@ -119,6 +120,7 @@ impl SpeakTypeApp {
             selected_recording_for_retry: None,
             tray: create_tray(ctx),
             hidden_to_tray: start_hidden_to_tray,
+            start_minimized_pending: start_hidden_to_tray,
             restore_guard_until: None,
             exit_requested: false,
             scenario_manager: ScenarioManager::with_current(current_scenario),
@@ -141,6 +143,7 @@ impl SpeakTypeApp {
         app.start_model_job();
         if start_hidden_to_tray && app.tray.is_none() {
             app.hidden_to_tray = false;
+            app.start_minimized_pending = false;
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
         }
         app
@@ -393,7 +396,7 @@ impl SpeakTypeApp {
     fn minimize_to_tray(&mut self, ctx: &egui::Context) {
         self.hidden_to_tray = true;
         ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        minimize_main_window();
     }
 
     fn show_from_tray(&mut self, ctx: &egui::Context) {
@@ -590,6 +593,10 @@ impl eframe::App for SpeakTypeApp {
         self.poll_worker_events();
         self.poll_input_level();
         self.capture_hotkey_from_input(ctx);
+        if self.start_minimized_pending {
+            self.start_minimized_pending = false;
+            self.minimize_to_tray(ctx);
+        }
         let suppress_minimize_to_tray = self
             .restore_guard_until
             .map(|until| Instant::now() < until)
