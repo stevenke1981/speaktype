@@ -1258,7 +1258,7 @@ impl SpeakTypeApp {
             .default_width(760.0)
             .show(ctx, |ui| {
                 ui.label(format!("模型資料夾：{}", paths::models_dir().display()));
-                ui.label("SHA256 會針對已安裝檔案即時計算；下載時會使用遠端 ETag 可用資訊做驗證。");
+                ui.label("下載時會使用遠端 ETag 可用資訊做驗證；大型模型不會在 GUI 開啟時即時計算 SHA256。");
                 ui.separator();
 
                 for entry in MODEL_CATALOG {
@@ -1280,18 +1280,10 @@ impl SpeakTypeApp {
                             "狀態：{}",
                             if installed { "已安裝" } else { "未下載" }
                         ));
-
                         if installed {
-                            match models::sha256_file(&path) {
-                                Ok(hash) => {
-                                    ui.monospace(format!("SHA256：{hash}"));
-                                }
-                                Err(err) => {
-                                    ui.colored_label(
-                                        egui::Color32::RED,
-                                        format!("SHA256 計算失敗：{err}"),
-                                    );
-                                }
+                            ui.label(format!("檔案：{}", path.display()));
+                            if let Ok(metadata) = std::fs::metadata(&path) {
+                                ui.label(format!("大小：{}", format_bytes(metadata.len())));
                             }
                         }
 
