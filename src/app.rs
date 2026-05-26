@@ -11,6 +11,7 @@ use speaktype::modules::input::{GlobalHotkey, HotkeyCombo, HotkeyEvent};
 use speaktype::modules::paths;
 use speaktype::modules::recordings;
 use speaktype::modules::scenario::{Scenario, ScenarioManager};
+use speaktype::modules::tray::{create_tray, TrayAction, TrayManager};
 use speaktype::modules::utils::device::DeviceStatus;
 use std::fs;
 use std::path::Path;
@@ -42,6 +43,9 @@ pub struct SpeakTypeApp {
     model_cancel: Option<Arc<AtomicBool>>,
     hotkey_capture: bool,
     recording_filter: String,
+    tray: Option<TrayManager>,
+    hidden_to_tray: bool,
+    exit_requested: bool,
     scenario_manager: ScenarioManager,
     history: HistoryManager,
     gui: GuiManager,
@@ -97,6 +101,9 @@ impl SpeakTypeApp {
             model_cancel: None,
             hotkey_capture: false,
             recording_filter: String::new(),
+            tray: create_tray(),
+            hidden_to_tray: false,
+            exit_requested: false,
             scenario_manager: ScenarioManager::with_current(current_scenario),
             history: HistoryManager::load(),
             gui: GuiManager::new(),
@@ -291,6 +298,43 @@ impl SpeakTypeApp {
         }
     }
 
+    fn minimize_to_tray(&mut self, ctx: &egui::Context) {
+        self.hidden_to_tray = true;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+    }
+
+    fn show_from_tray(&mut self, ctx: &egui::Context) {
+        self.hidden_to_tray = false;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+    }
+
+    fn handle_tray_actions(&mut self, ctx: &egui::Context) {
+        while let Some(action) = self.tray.as_ref().and_then(TrayManager::poll_action) {
+            match action {
+                TrayAction::ToggleRecording => {
+                    self.show_from_tray(ctx);
+                    self.toggle_recording_action();
+                }
+                TrayAction::OpenSettings => {
+                    self.show_from_tray(ctx);
+                    self.show_settings_window = true;
+                }
+                TrayAction::OpenHistory => {
+                    self.show_from_tray(ctx);
+                    self.show_history_window = true;
+                }
+                TrayAction::Exit => {
+                    self.exit_requested = true;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+        }
+    }
+
     fn poll_model_events(&mut self) {
         let mut should_clear = false;
         let mut pending_error = None;
@@ -452,10 +496,25 @@ fn load_font_bytes(path: &str) -> Option<Vec<u8>> {
 
 impl eframe::App for SpeakTypeApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.handle_tray_actions(ctx);
         self.poll_model_events();
         self.poll_transcription_events();
         self.capture_hotkey_from_input(ctx);
 
+        if ctx.input(|input| input.viewport().close_requested()) && !self.exit_requested {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.minimize_to_tray(ctx);
+        }
+        if self.tray.is_some()
+            && !self.hidden_to_tray
+            && ctx.input(|input| input.viewport().minimized.unwrap_or(false))
+        {
+            self.minimize_to_tray(ctx);
+        }
+
+        if self.tray.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(250));
+        }
         if self.config.hotkeys.global_hotkey_enabled {
             ctx.request_repaint_after(Duration::from_millis(50));
         }
@@ -494,7 +553,20 @@ impl eframe::App for SpeakTypeApp {
                 if ui.button("刷新狀態").clicked() {
                     self.refresh_device_status();
                 }
+                if ui
+                    .add_enabled(self.tray.is_some(), egui::Button::new("最小化到 Tray"))
+                    .clicked()
+                {
+                    self.minimize_to_tray(ctx);
+                }
             });
+
+            if self.hidden_to_tray {
+                ui.colored_label(
+                    egui::Color32::from_rgb(80, 180, 120),
+                    "主視窗已藏到系統匣，可從 tray 右鍵選單叫回。",
+                );
+            }
 
             ui.add_space(8.0);
 

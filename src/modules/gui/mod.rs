@@ -27,13 +27,15 @@ impl GuiManager {
 
     fn draw_status_row(&self, ui: &mut egui::Ui, text: &str, label: &str) {
         ui.horizontal(|ui| {
-            let color = if text.contains("就緒") || text.contains("已載入") {
-                egui::Color32::from_rgb(0, 200, 100)
-            } else if text.contains("未找到") {
-                egui::Color32::from_rgb(255, 180, 0)
-            } else {
-                egui::Color32::RED
-            };
+            let color =
+                if text.contains("就緒") || text.contains("已載入") || text.contains("已準備")
+                {
+                    egui::Color32::from_rgb(0, 200, 100)
+                } else if text.contains("未找到") {
+                    egui::Color32::from_rgb(255, 180, 0)
+                } else {
+                    egui::Color32::RED
+                };
             ui.colored_label(color, "●");
             ui.label(format!("{}：{}", label, text));
         });
