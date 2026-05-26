@@ -866,320 +866,333 @@ impl SpeakTypeApp {
         let mut show_settings_window = self.show_settings_window;
         let mut pending_startup_update = None;
         let mut pending_diagnostic_export = false;
+        let max_settings_height = (ctx.available_rect().height() - 80.0).max(360.0);
 
         egui::Window::new("設定")
             .open(&mut show_settings_window)
             .resizable(true)
             .default_width(620.0)
+            .default_height(max_settings_height.min(760.0))
             .show(ctx, |ui| {
-                ui.label("PTT");
-                ui.horizontal(|ui| {
-                    ui.label("快捷鍵");
-                    ui.monospace(&self.config.hotkeys.record_toggle);
-                    if ui
-                        .button(if self.hotkey_capture {
-                            "按下新的快捷鍵..."
-                        } else {
-                            "捕捉"
-                        })
-                        .clicked()
-                    {
-                        self.hotkey_capture = true;
-                    }
-                });
-                ui.horizontal(|ui| {
-                    ui.label("手動輸入");
-                    let mut hotkey = self.config.hotkeys.record_toggle.clone();
-                    if ui.text_edit_singleline(&mut hotkey).lost_focus()
-                        && hotkey != self.config.hotkeys.record_toggle
-                    {
-                        match HotkeyCombo::parse(&hotkey) {
-                            Ok(combo) => {
-                                let display = combo.display();
-                                self.config.hotkeys.record_toggle = display.clone();
-                                if let Err(err) = self.hotkey.update_hotkey(&display) {
-                                    self.record_error(err);
-                                }
-                                should_save = true;
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .max_height(max_settings_height)
+                    .show(ui, |ui| {
+                        ui.label("PTT");
+                        ui.horizontal(|ui| {
+                            ui.label("快捷鍵");
+                            ui.monospace(&self.config.hotkeys.record_toggle);
+                            if ui
+                                .button(if self.hotkey_capture {
+                                    "按下新的快捷鍵..."
+                                } else {
+                                    "捕捉"
+                                })
+                                .clicked()
+                            {
+                                self.hotkey_capture = true;
                             }
-                            Err(err) => self.record_error(err),
-                        }
-                    }
-                });
-                should_save |= ui
-                    .checkbox(
-                        &mut self.config.hotkeys.global_hotkey_enabled,
-                        "啟用全域快捷鍵",
-                    )
-                    .changed();
-                should_save |= ui
-                    .checkbox(
-                        &mut self.config.hotkeys.hold_to_record,
-                        "按住錄音，放開後轉錄",
-                    )
-                    .changed();
-
-                ui.separator();
-                ui.label("Windows 啟動");
-                if ui
-                    .checkbox(
-                        &mut self.config.startup.launch_on_startup,
-                        "登入 Windows 後自動啟動",
-                    )
-                    .changed()
-                {
-                    pending_startup_update = Some((
-                        self.config.startup.launch_on_startup,
-                        self.config.startup.start_hidden_to_tray,
-                    ));
-                    should_save = true;
-                }
-                if ui
-                    .checkbox(
-                        &mut self.config.startup.start_hidden_to_tray,
-                        "自動啟動時直接進入系統匣",
-                    )
-                    .changed()
-                {
-                    if self.config.startup.launch_on_startup {
-                        pending_startup_update = Some((
-                            self.config.startup.launch_on_startup,
-                            self.config.startup.start_hidden_to_tray,
-                        ));
-                    }
-                    should_save = true;
-                }
-
-                ui.separator();
-                ui.label("麥克風");
-                ui.horizontal(|ui| {
-                    if ui.button("刷新裝置").clicked() {
-                        self.audio_devices = self.engine.input_devices();
-                    }
-                    if ui
-                        .button(if self.level_monitor.is_some() {
-                            "停止音量測試"
-                        } else {
-                            "開始音量測試"
-                        })
-                        .clicked()
-                    {
-                        self.toggle_level_monitor();
-                    }
-                });
-                let selected_device_label = self
-                    .config
-                    .recording
-                    .input_device_name
-                    .clone()
-                    .unwrap_or_else(|| "系統預設".to_string());
-                egui::ComboBox::from_label("輸入裝置")
-                    .selected_text(selected_device_label)
-                    .show_ui(ui, |ui| {
-                        if ui
-                            .selectable_label(
-                                self.config.recording.input_device_name.is_none(),
-                                "系統預設",
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("手動輸入");
+                            let mut hotkey = self.config.hotkeys.record_toggle.clone();
+                            if ui.text_edit_singleline(&mut hotkey).lost_focus()
+                                && hotkey != self.config.hotkeys.record_toggle
+                            {
+                                match HotkeyCombo::parse(&hotkey) {
+                                    Ok(combo) => {
+                                        let display = combo.display();
+                                        self.config.hotkeys.record_toggle = display.clone();
+                                        if let Err(err) = self.hotkey.update_hotkey(&display) {
+                                            self.record_error(err);
+                                        }
+                                        should_save = true;
+                                    }
+                                    Err(err) => self.record_error(err),
+                                }
+                            }
+                        });
+                        should_save |= ui
+                            .checkbox(
+                                &mut self.config.hotkeys.global_hotkey_enabled,
+                                "啟用全域快捷鍵",
                             )
-                            .clicked()
+                            .changed();
+                        should_save |= ui
+                            .checkbox(
+                                &mut self.config.hotkeys.hold_to_record,
+                                "按住錄音，放開後轉錄",
+                            )
+                            .changed();
+
+                        ui.separator();
+                        ui.label("Windows 啟動");
+                        if ui
+                            .checkbox(
+                                &mut self.config.startup.launch_on_startup,
+                                "登入 Windows 後自動啟動",
+                            )
+                            .changed()
                         {
-                            self.config.recording.input_device_name = None;
+                            pending_startup_update = Some((
+                                self.config.startup.launch_on_startup,
+                                self.config.startup.start_hidden_to_tray,
+                            ));
+                            should_save = true;
+                        }
+                        if ui
+                            .checkbox(
+                                &mut self.config.startup.start_hidden_to_tray,
+                                "自動啟動時直接進入系統匣",
+                            )
+                            .changed()
+                        {
+                            if self.config.startup.launch_on_startup {
+                                pending_startup_update = Some((
+                                    self.config.startup.launch_on_startup,
+                                    self.config.startup.start_hidden_to_tray,
+                                ));
+                            }
+                            should_save = true;
+                        }
+
+                        ui.separator();
+                        ui.label("麥克風");
+                        ui.horizontal(|ui| {
+                            if ui.button("刷新裝置").clicked() {
+                                self.audio_devices = self.engine.input_devices();
+                            }
+                            if ui
+                                .button(if self.level_monitor.is_some() {
+                                    "停止音量測試"
+                                } else {
+                                    "開始音量測試"
+                                })
+                                .clicked()
+                            {
+                                self.toggle_level_monitor();
+                            }
+                        });
+                        let selected_device_label = self
+                            .config
+                            .recording
+                            .input_device_name
+                            .clone()
+                            .unwrap_or_else(|| "系統預設".to_string());
+                        egui::ComboBox::from_label("輸入裝置")
+                            .selected_text(selected_device_label)
+                            .show_ui(ui, |ui| {
+                                if ui
+                                    .selectable_label(
+                                        self.config.recording.input_device_name.is_none(),
+                                        "系統預設",
+                                    )
+                                    .clicked()
+                                {
+                                    self.config.recording.input_device_name = None;
+                                    self.engine.update_audio_config(
+                                        self.config.recording.input_device_name.clone(),
+                                        self.config.recording.gain,
+                                    );
+                                    should_save = true;
+                                }
+                                for device in &self.audio_devices {
+                                    if ui
+                                        .selectable_label(
+                                            self.config.recording.input_device_name.as_ref()
+                                                == Some(device),
+                                            device,
+                                        )
+                                        .clicked()
+                                    {
+                                        self.config.recording.input_device_name =
+                                            Some(device.clone());
+                                        self.engine.update_audio_config(
+                                            self.config.recording.input_device_name.clone(),
+                                            self.config.recording.gain,
+                                        );
+                                        should_save = true;
+                                    }
+                                }
+                            });
+                        if ui
+                            .add(
+                                egui::Slider::new(&mut self.config.recording.gain, 0.2..=4.0)
+                                    .text("錄音增益"),
+                            )
+                            .changed()
+                        {
                             self.engine.update_audio_config(
                                 self.config.recording.input_device_name.clone(),
                                 self.config.recording.gain,
                             );
                             should_save = true;
                         }
-                        for device in &self.audio_devices {
-                            if ui
-                                .selectable_label(
-                                    self.config.recording.input_device_name.as_ref()
-                                        == Some(device),
-                                    device,
-                                )
-                                .clicked()
-                            {
-                                self.config.recording.input_device_name = Some(device.clone());
-                                self.engine.update_audio_config(
-                                    self.config.recording.input_device_name.clone(),
-                                    self.config.recording.gain,
-                                );
+                        ui.add(egui::ProgressBar::new(self.input_level).text("即時音量"));
+
+                        ui.separator();
+                        ui.label("轉錄模式");
+                        should_save |= ui
+                            .radio_value(
+                                &mut self.config.recording.transcription_mode,
+                                TranscriptionMode::Stable,
+                                "穩定模式：完整錄音檔後轉錄",
+                            )
+                            .changed();
+                        should_save |= ui
+                            .radio_value(
+                                &mut self.config.recording.transcription_mode,
+                                TranscriptionMode::Fast,
+                                "快速模式：先顯示草稿狀態，再輸出最終文字",
+                            )
+                            .changed();
+
+                        ui.separator();
+                        ui.label("文字暫存");
+                        should_save |= ui
+                            .radio_value(
+                                &mut self.config.output.buffer_mode,
+                                OutputBufferMode::Temporary,
+                                "暫存區（不保留到剪貼簿）",
+                            )
+                            .changed();
+                        should_save |= ui
+                            .radio_value(
+                                &mut self.config.output.buffer_mode,
+                                OutputBufferMode::Clipboard,
+                                "剪貼簿",
+                            )
+                            .changed();
+                        should_save |= ui
+                            .checkbox(
+                                &mut self.config.output.auto_inject_focused_window,
+                                "轉錄完成後自動注入焦點視窗",
+                            )
+                            .changed();
+                        should_save |= ui
+                            .checkbox(
+                                &mut self.config.output.manual_review_before_send,
+                                "輸出前先預覽，手動確認後送出",
+                            )
+                            .changed();
+                        should_save |= ui
+                            .add_enabled(
+                                self.config.output.buffer_mode == OutputBufferMode::Temporary,
+                                egui::Checkbox::new(
+                                    &mut self.config.output.restore_clipboard_after_inject,
+                                    "暫存區注入後還原原本剪貼簿文字",
+                                ),
+                            )
+                            .changed();
+
+                        ui.separator();
+                        ui.label("簡繁與用語轉換");
+                        should_save |= ui
+                            .radio_value(
+                                &mut self.config.output.chinese_conversion,
+                                ChineseConversionMode::Disabled,
+                                "不轉換",
+                            )
+                            .changed();
+                        should_save |= ui
+                            .radio_value(
+                                &mut self.config.output.chinese_conversion,
+                                ChineseConversionMode::TraditionalTaiwan,
+                                "輸出繁體（台灣用語）",
+                            )
+                            .changed();
+                        should_save |= ui
+                            .radio_value(
+                                &mut self.config.output.chinese_conversion,
+                                ChineseConversionMode::SimplifiedChina,
+                                "輸出簡體（中國大陸用語）",
+                            )
+                            .changed();
+
+                        ui.separator();
+                        should_save |= draw_vocabulary_settings(
+                            ui,
+                            &mut self.config.output.vocabulary.entries,
+                        );
+
+                        ui.separator();
+                        should_save |=
+                            draw_output_rules_settings(ui, &mut self.config.output.rules);
+
+                        ui.separator();
+                        ui.label("模型");
+                        ui.label(format!("模型目錄：{}", paths::models_dir().display()));
+                        if ui
+                            .checkbox(&mut self.config.use_cuda, "啟用 CUDA 推論")
+                            .changed()
+                        {
+                            should_save = true;
+                            should_reload_model = true;
+                        }
+                        if ui
+                            .button("重新載入目前模型")
+                            .on_hover_text("套用模型名稱、目錄與 CUDA 設定")
+                            .clicked()
+                        {
+                            should_save = true;
+                            should_reload_model = true;
+                        }
+                        ui.horizontal(|ui| {
+                            ui.label("名稱");
+                            let mut model_name = self.config.get_model_name();
+                            if ui.text_edit_singleline(&mut model_name).changed() {
+                                self.config.model_name = Some(model_name);
                                 should_save = true;
                             }
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("目錄");
+                            let mut models_dir = self.config.get_models_dir();
+                            if ui.text_edit_singleline(&mut models_dir).changed() {
+                                self.config.models_dir = Some(models_dir);
+                                should_save = true;
+                            }
+                        });
+
+                        ui.separator();
+                        ui.label("錄音檔保留");
+                        should_save |= ui
+                            .add(
+                                egui::DragValue::new(&mut self.config.recording.retention_days)
+                                    .speed(1)
+                                    .clamp_range(0..=3650)
+                                    .suffix(" 天"),
+                            )
+                            .changed();
+                        should_save |= ui
+                            .add(
+                                egui::DragValue::new(&mut self.config.recording.max_total_mb)
+                                    .speed(128)
+                                    .clamp_range(0..=1024 * 1024)
+                                    .suffix(" MB"),
+                            )
+                            .changed();
+                        if ui.button("立即清理超出限制的錄音檔").clicked() {
+                            recordings::cleanup_recordings(
+                                self.config.recording.retention_days,
+                                self.config.recording.max_total_mb,
+                            );
+                        }
+
+                        ui.separator();
+                        ui.label("診斷");
+                        if ui.button("匯出診斷包").clicked() {
+                            pending_diagnostic_export = true;
+                        }
+                        ui.label(
+                            "診斷包會包含設定、log、最近錯誤、裝置與模型資訊；不包含錄音內容。",
+                        );
+
+                        ui.separator();
+                        if ui.button("儲存設定").clicked() {
+                            should_save = true;
                         }
                     });
-                if ui
-                    .add(
-                        egui::Slider::new(&mut self.config.recording.gain, 0.2..=4.0)
-                            .text("錄音增益"),
-                    )
-                    .changed()
-                {
-                    self.engine.update_audio_config(
-                        self.config.recording.input_device_name.clone(),
-                        self.config.recording.gain,
-                    );
-                    should_save = true;
-                }
-                ui.add(egui::ProgressBar::new(self.input_level).text("即時音量"));
-
-                ui.separator();
-                ui.label("轉錄模式");
-                should_save |= ui
-                    .radio_value(
-                        &mut self.config.recording.transcription_mode,
-                        TranscriptionMode::Stable,
-                        "穩定模式：完整錄音檔後轉錄",
-                    )
-                    .changed();
-                should_save |= ui
-                    .radio_value(
-                        &mut self.config.recording.transcription_mode,
-                        TranscriptionMode::Fast,
-                        "快速模式：先顯示草稿狀態，再輸出最終文字",
-                    )
-                    .changed();
-
-                ui.separator();
-                ui.label("文字暫存");
-                should_save |= ui
-                    .radio_value(
-                        &mut self.config.output.buffer_mode,
-                        OutputBufferMode::Temporary,
-                        "暫存區（不保留到剪貼簿）",
-                    )
-                    .changed();
-                should_save |= ui
-                    .radio_value(
-                        &mut self.config.output.buffer_mode,
-                        OutputBufferMode::Clipboard,
-                        "剪貼簿",
-                    )
-                    .changed();
-                should_save |= ui
-                    .checkbox(
-                        &mut self.config.output.auto_inject_focused_window,
-                        "轉錄完成後自動注入焦點視窗",
-                    )
-                    .changed();
-                should_save |= ui
-                    .checkbox(
-                        &mut self.config.output.manual_review_before_send,
-                        "輸出前先預覽，手動確認後送出",
-                    )
-                    .changed();
-                should_save |= ui
-                    .add_enabled(
-                        self.config.output.buffer_mode == OutputBufferMode::Temporary,
-                        egui::Checkbox::new(
-                            &mut self.config.output.restore_clipboard_after_inject,
-                            "暫存區注入後還原原本剪貼簿文字",
-                        ),
-                    )
-                    .changed();
-
-                ui.separator();
-                ui.label("簡繁與用語轉換");
-                should_save |= ui
-                    .radio_value(
-                        &mut self.config.output.chinese_conversion,
-                        ChineseConversionMode::Disabled,
-                        "不轉換",
-                    )
-                    .changed();
-                should_save |= ui
-                    .radio_value(
-                        &mut self.config.output.chinese_conversion,
-                        ChineseConversionMode::TraditionalTaiwan,
-                        "輸出繁體（台灣用語）",
-                    )
-                    .changed();
-                should_save |= ui
-                    .radio_value(
-                        &mut self.config.output.chinese_conversion,
-                        ChineseConversionMode::SimplifiedChina,
-                        "輸出簡體（中國大陸用語）",
-                    )
-                    .changed();
-
-                ui.separator();
-                should_save |=
-                    draw_vocabulary_settings(ui, &mut self.config.output.vocabulary.entries);
-
-                ui.separator();
-                should_save |= draw_output_rules_settings(ui, &mut self.config.output.rules);
-
-                ui.separator();
-                ui.label("模型");
-                ui.label(format!("模型目錄：{}", paths::models_dir().display()));
-                if ui
-                    .checkbox(&mut self.config.use_cuda, "啟用 CUDA 推論")
-                    .changed()
-                {
-                    should_save = true;
-                    should_reload_model = true;
-                }
-                if ui
-                    .button("重新載入目前模型")
-                    .on_hover_text("套用模型名稱、目錄與 CUDA 設定")
-                    .clicked()
-                {
-                    should_save = true;
-                    should_reload_model = true;
-                }
-                ui.horizontal(|ui| {
-                    ui.label("名稱");
-                    let mut model_name = self.config.get_model_name();
-                    if ui.text_edit_singleline(&mut model_name).changed() {
-                        self.config.model_name = Some(model_name);
-                        should_save = true;
-                    }
-                });
-                ui.horizontal(|ui| {
-                    ui.label("目錄");
-                    let mut models_dir = self.config.get_models_dir();
-                    if ui.text_edit_singleline(&mut models_dir).changed() {
-                        self.config.models_dir = Some(models_dir);
-                        should_save = true;
-                    }
-                });
-
-                ui.separator();
-                ui.label("錄音檔保留");
-                should_save |= ui
-                    .add(
-                        egui::DragValue::new(&mut self.config.recording.retention_days)
-                            .speed(1)
-                            .clamp_range(0..=3650)
-                            .suffix(" 天"),
-                    )
-                    .changed();
-                should_save |= ui
-                    .add(
-                        egui::DragValue::new(&mut self.config.recording.max_total_mb)
-                            .speed(128)
-                            .clamp_range(0..=1024 * 1024)
-                            .suffix(" MB"),
-                    )
-                    .changed();
-                if ui.button("立即清理超出限制的錄音檔").clicked() {
-                    recordings::cleanup_recordings(
-                        self.config.recording.retention_days,
-                        self.config.recording.max_total_mb,
-                    );
-                }
-
-                ui.separator();
-                ui.label("診斷");
-                if ui.button("匯出診斷包").clicked() {
-                    pending_diagnostic_export = true;
-                }
-                ui.label("診斷包會包含設定、log、最近錯誤、裝置與模型資訊；不包含錄音內容。");
-
-                ui.separator();
-                if ui.button("儲存設定").clicked() {
-                    should_save = true;
-                }
             });
 
         if let Some((enabled, hidden)) = pending_startup_update {
