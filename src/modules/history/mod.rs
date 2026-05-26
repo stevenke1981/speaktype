@@ -2,8 +2,8 @@
 // 職責：儲存辨識結果、時間戳、情境
 
 use crate::modules::error::log_error;
+use crate::modules::paths;
 use chrono::{DateTime, Local};
-use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -87,8 +87,7 @@ impl HistoryManager {
     }
 
     pub fn history_path() -> Option<PathBuf> {
-        ProjectDirs::from("com", "SpeakType", "SpeakType")
-            .map(|dirs| dirs.data_local_dir().join(HISTORY_FILE))
+        Some(paths::data_dir().join(HISTORY_FILE))
     }
 
     fn save(&self) {

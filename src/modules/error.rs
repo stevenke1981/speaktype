@@ -1,5 +1,5 @@
+use crate::modules::paths;
 use chrono::Local;
-use directories::ProjectDirs;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
@@ -38,6 +38,5 @@ pub fn log_error(context: &str, error: impl std::fmt::Display) {
 }
 
 pub fn log_file_path() -> Option<PathBuf> {
-    ProjectDirs::from("com", "SpeakType", "SpeakType")
-        .map(|dirs| dirs.data_local_dir().join("logs").join("speaktype.log"))
+    Some(paths::logs_dir().join("speaktype.log"))
 }

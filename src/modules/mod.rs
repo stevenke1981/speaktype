@@ -5,6 +5,8 @@ pub mod error;
 pub mod gui;
 pub mod history;
 pub mod input;
+pub mod paths;
+pub mod recordings;
 pub mod scenario;
 pub mod text_conversion;
 pub mod transcription;

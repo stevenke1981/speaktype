@@ -30,6 +30,47 @@ impl Scenario {
             _ => None,
         }
     }
+
+    pub fn postprocess(&self, text: &str) -> String {
+        match self {
+            Scenario::Chat => postprocess_chat(text),
+            Scenario::Writing => postprocess_writing(text),
+            Scenario::Code => postprocess_code(text),
+        }
+    }
+}
+
+fn postprocess_chat(text: &str) -> String {
+    let trimmed = text.trim();
+    if trimmed.is_empty() || trimmed.ends_with(['。', '！', '？', '.', '!', '?', ':', '：']) {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed}。")
+    }
+}
+
+fn postprocess_writing(text: &str) -> String {
+    text.split(['。', '！', '？'])
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(|part| format!("{part}。"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn postprocess_code(text: &str) -> String {
+    text.replace(" ，", ",")
+        .replace("。", ".")
+        .replace(" ：", ":")
+        .replace("；", ";")
+        .replace("（", "(")
+        .replace("）", ")")
+        .replace("［", "[")
+        .replace("］", "]")
+        .replace("｛", "{")
+        .replace("｝", "}")
+        .trim()
+        .to_string()
 }
 
 pub struct ScenarioManager {

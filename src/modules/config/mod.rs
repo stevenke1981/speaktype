@@ -2,7 +2,7 @@
 // 職責：儲存與載入使用者設定（情境、模型路徑、熱鍵等）
 
 use crate::modules::error::log_error;
-use directories::ProjectDirs;
+use crate::modules::paths;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::path::PathBuf;
@@ -45,7 +45,7 @@ impl Default for AppConfig {
         Self {
             last_scenario: None,
             model_name: Some("large-v3-turbo".to_string()),
-            models_dir: Some("models".to_string()),
+            models_dir: Some(default_models_dir().unwrap_or_else(|| "models".to_string())),
             use_cuda: true,
             recording: RecordingConfig::default(),
             hotkeys: HotkeyConfig::default(),
@@ -63,6 +63,14 @@ pub struct RecordingConfig {
     /// 是否啟用簡單 VAD
     #[serde(default)]
     pub enable_vad: bool,
+
+    /// 錄音檔保留天數，0 表示不依天數刪除
+    #[serde(default = "default_recording_retention_days")]
+    pub retention_days: u32,
+
+    /// 錄音檔總容量上限 MB，0 表示不限制
+    #[serde(default = "default_recording_max_total_mb")]
+    pub max_total_mb: u64,
 }
 
 impl Default for RecordingConfig {
@@ -70,6 +78,8 @@ impl Default for RecordingConfig {
         Self {
             sample_rate: 16000,
             enable_vad: false,
+            retention_days: 30,
+            max_total_mb: 4096,
         }
     }
 }
@@ -124,6 +134,10 @@ pub struct OutputConfig {
     /// OpenCC 文字轉換：不轉換、繁體台灣用語、簡體中國大陸用語
     #[serde(default)]
     pub chinese_conversion: ChineseConversionMode,
+
+    /// 轉錄完成後先放在預覽區，由使用者手動送出
+    #[serde(default)]
+    pub manual_review_before_send: bool,
 }
 
 impl Default for OutputConfig {
@@ -133,6 +147,7 @@ impl Default for OutputConfig {
             auto_inject_focused_window: true,
             restore_clipboard_after_inject: true,
             chinese_conversion: ChineseConversionMode::default(),
+            manual_review_before_send: false,
         }
     }
 }
@@ -178,6 +193,9 @@ impl AppConfig {
             self.hotkeys.record_toggle = "Ctrl+Shift+L".to_string();
         }
         self.hotkeys.hold_to_record = true;
+        if self.get_models_dir() == "models" {
+            self.models_dir = default_models_dir();
+        }
     }
 
     /// 儲存設定檔
@@ -203,8 +221,7 @@ impl AppConfig {
 
     /// 取得設定檔完整路徑
     fn config_path() -> Option<PathBuf> {
-        ProjectDirs::from("com", "SpeakType", "SpeakType")
-            .map(|dirs| dirs.config_dir().join(CONFIG_FILE))
+        Some(paths::config_dir().join(CONFIG_FILE))
     }
 
     /// 取得模型目錄
@@ -266,7 +283,7 @@ fn default_model_name() -> Option<String> {
 }
 
 fn default_models_dir() -> Option<String> {
-    Some("models".to_string())
+    Some(paths::models_dir().display().to_string())
 }
 
 fn default_use_cuda() -> bool {
@@ -275,6 +292,14 @@ fn default_use_cuda() -> bool {
 
 fn default_sample_rate() -> u32 {
     16000
+}
+
+fn default_recording_retention_days() -> u32 {
+    30
+}
+
+fn default_recording_max_total_mb() -> u64 {
+    4096
 }
 
 fn default_record_hotkey() -> String {
