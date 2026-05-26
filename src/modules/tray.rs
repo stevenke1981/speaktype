@@ -1,7 +1,9 @@
 use crate::modules::error::log_error;
+use std::sync::mpsc::{self, Receiver};
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
-use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
+use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
+pub const TRAY_SHOW_MAIN: &str = "speaktype.tray.show_main";
 pub const TRAY_TOGGLE_RECORDING: &str = "speaktype.tray.toggle_recording";
 pub const TRAY_SETTINGS: &str = "speaktype.tray.settings";
 pub const TRAY_HISTORY: &str = "speaktype.tray.history";
@@ -9,10 +11,12 @@ pub const TRAY_EXIT: &str = "speaktype.tray.exit";
 
 pub struct TrayManager {
     _icon: TrayIcon,
+    events: Receiver<TrayAction>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayAction {
+    ShowMain,
     ToggleRecording,
     OpenSettings,
     OpenHistory,
@@ -20,13 +24,15 @@ pub enum TrayAction {
 }
 
 impl TrayManager {
-    pub fn new() -> Result<Self, String> {
+    pub fn new(ctx: &egui::Context) -> Result<Self, String> {
         let menu = Menu::new();
+        let show_main = MenuItem::with_id(TRAY_SHOW_MAIN, "顯示主視窗", true, None);
         let toggle = MenuItem::with_id(TRAY_TOGGLE_RECORDING, "開始 / 停止錄音", true, None);
         let settings = MenuItem::with_id(TRAY_SETTINGS, "設定", true, None);
         let history = MenuItem::with_id(TRAY_HISTORY, "紀錄", true, None);
         let exit = MenuItem::with_id(TRAY_EXIT, "退出", true, None);
 
+        menu.append(&show_main).map_err(|err| err.to_string())?;
         menu.append(&toggle).map_err(|err| err.to_string())?;
         menu.append(&settings).map_err(|err| err.to_string())?;
         menu.append(&history).map_err(|err| err.to_string())?;
@@ -43,31 +49,63 @@ impl TrayManager {
             .build()
             .map_err(|err| err.to_string())?;
 
-        Ok(Self { _icon: icon })
+        let (tx, rx) = mpsc::channel();
+        let menu_tx = tx.clone();
+        let menu_ctx = ctx.clone();
+        MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
+            if let Some(action) = action_from_menu_id(event.id.as_ref()) {
+                let _ = menu_tx.send(action);
+                menu_ctx.request_repaint();
+            }
+        }));
+
+        let tray_tx = tx;
+        let tray_ctx = ctx.clone();
+        TrayIconEvent::set_event_handler(Some(move |event| match event {
+            TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            }
+            | TrayIconEvent::DoubleClick {
+                button: MouseButton::Left,
+                ..
+            } => {
+                let _ = tray_tx.send(TrayAction::ShowMain);
+                tray_ctx.request_repaint();
+            }
+            _ => {}
+        }));
+
+        Ok(Self {
+            _icon: icon,
+            events: rx,
+        })
     }
 
     pub fn poll_action(&self) -> Option<TrayAction> {
-        while let Ok(event) = MenuEvent::receiver().try_recv() {
-            let action = match event.id.as_ref() {
-                TRAY_TOGGLE_RECORDING => TrayAction::ToggleRecording,
-                TRAY_SETTINGS => TrayAction::OpenSettings,
-                TRAY_HISTORY => TrayAction::OpenHistory,
-                TRAY_EXIT => TrayAction::Exit,
-                _ => continue,
-            };
-            return Some(action);
-        }
-        None
+        self.events.try_recv().ok()
     }
 }
 
-pub fn create_tray() -> Option<TrayManager> {
-    match TrayManager::new() {
+pub fn create_tray(ctx: &egui::Context) -> Option<TrayManager> {
+    match TrayManager::new(ctx) {
         Ok(tray) => Some(tray),
         Err(err) => {
             log_error("tray init", err);
             None
         }
+    }
+}
+
+fn action_from_menu_id(id: &str) -> Option<TrayAction> {
+    match id {
+        TRAY_SHOW_MAIN => Some(TrayAction::ShowMain),
+        TRAY_TOGGLE_RECORDING => Some(TrayAction::ToggleRecording),
+        TRAY_SETTINGS => Some(TrayAction::OpenSettings),
+        TRAY_HISTORY => Some(TrayAction::OpenHistory),
+        TRAY_EXIT => Some(TrayAction::Exit),
+        _ => None,
     }
 }
 

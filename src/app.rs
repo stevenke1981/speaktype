@@ -55,6 +55,7 @@ pub struct SpeakTypeApp {
     selected_recording_for_retry: Option<std::path::PathBuf>,
     tray: Option<TrayManager>,
     hidden_to_tray: bool,
+    restore_guard_until: Option<Instant>,
     exit_requested: bool,
     scenario_manager: ScenarioManager,
     history: HistoryManager,
@@ -116,8 +117,9 @@ impl SpeakTypeApp {
             level_monitor: None,
             input_level: 0.0,
             selected_recording_for_retry: None,
-            tray: create_tray(),
+            tray: create_tray(ctx),
             hidden_to_tray: start_hidden_to_tray,
+            restore_guard_until: None,
             exit_requested: false,
             scenario_manager: ScenarioManager::with_current(current_scenario),
             history: HistoryManager::load(),
@@ -396,6 +398,7 @@ impl SpeakTypeApp {
 
     fn show_from_tray(&mut self, ctx: &egui::Context) {
         self.hidden_to_tray = false;
+        self.restore_guard_until = Some(Instant::now() + Duration::from_millis(900));
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
         ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
@@ -404,6 +407,9 @@ impl SpeakTypeApp {
     fn handle_tray_actions(&mut self, ctx: &egui::Context) {
         while let Some(action) = self.tray.as_ref().and_then(TrayManager::poll_action) {
             match action {
+                TrayAction::ShowMain => {
+                    self.show_from_tray(ctx);
+                }
                 TrayAction::ToggleRecording => {
                     self.show_from_tray(ctx);
                     self.toggle_recording_action();
@@ -584,6 +590,13 @@ impl eframe::App for SpeakTypeApp {
         self.poll_worker_events();
         self.poll_input_level();
         self.capture_hotkey_from_input(ctx);
+        let suppress_minimize_to_tray = self
+            .restore_guard_until
+            .map(|until| Instant::now() < until)
+            .unwrap_or(false);
+        if !suppress_minimize_to_tray {
+            self.restore_guard_until = None;
+        }
 
         if ctx.input(|input| input.viewport().close_requested()) && !self.exit_requested {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
@@ -591,6 +604,7 @@ impl eframe::App for SpeakTypeApp {
         }
         if self.tray.is_some()
             && !self.hidden_to_tray
+            && !suppress_minimize_to_tray
             && ctx.input(|input| input.viewport().minimized.unwrap_or(false))
         {
             self.minimize_to_tray(ctx);
