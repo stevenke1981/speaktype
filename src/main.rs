@@ -13,17 +13,19 @@ fn main() {
         return;
     };
 
+    let start_hidden_to_tray = std::env::args().any(|arg| arg == "--tray");
     let options = NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([560.0, 560.0])
-            .with_title("SpeakType"),
+            .with_title("SpeakType")
+            .with_visible(!start_hidden_to_tray),
         ..Default::default()
     };
 
     if let Err(err) = eframe::run_native(
         "SpeakType",
         options,
-        Box::new(|cc| Box::new(SpeakTypeApp::new(&cc.egui_ctx))),
+        Box::new(move |cc| Box::new(SpeakTypeApp::new(&cc.egui_ctx, start_hidden_to_tray))),
     ) {
         log_error("app startup", err);
     }

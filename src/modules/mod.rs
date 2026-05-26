@@ -1,5 +1,6 @@
 pub mod audio;
 pub mod config;
+pub mod diagnostics;
 pub mod engine;
 pub mod error;
 pub mod gui;
@@ -7,8 +8,10 @@ pub mod history;
 pub mod input;
 pub mod models;
 pub mod paths;
+pub mod postprocess;
 pub mod recordings;
 pub mod scenario;
+pub mod startup;
 pub mod text_conversion;
 pub mod transcription;
 pub mod tray;

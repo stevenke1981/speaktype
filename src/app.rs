@@ -1,8 +1,10 @@
 use eframe::egui;
 use speaktype::modules::audio::LevelMonitor;
 use speaktype::modules::config::{
-    AppConfig, ChineseConversionMode, OutputBufferMode, TranscriptionMode,
+    AppConfig, ChineseConversionMode, OutputBufferMode, OutputRulesConfig, ScenarioOutputRules,
+    TranscriptionMode, VocabularyEntry,
 };
+use speaktype::modules::diagnostics;
 use speaktype::modules::engine::{
     load_recording_wav, ModelDownloadProgress, ModelEvent, ModelWorker, SpeakTypeEngine,
     TranscriptionEvent, TranscriptionRequest, TranscriptionResult, WorkerEvent,
@@ -15,6 +17,7 @@ use speaktype::modules::models::{self, MODEL_CATALOG};
 use speaktype::modules::paths;
 use speaktype::modules::recordings;
 use speaktype::modules::scenario::{Scenario, ScenarioManager};
+use speaktype::modules::startup;
 use speaktype::modules::tray::{create_tray, TrayAction, TrayManager};
 use speaktype::modules::utils::device::DeviceStatus;
 use std::fs;
@@ -63,7 +66,7 @@ pub struct SpeakTypeApp {
 }
 
 impl SpeakTypeApp {
-    pub fn new(ctx: &egui::Context) -> Self {
+    pub fn new(ctx: &egui::Context, start_hidden_to_tray: bool) -> Self {
         configure_cjk_fonts(ctx);
 
         let config = AppConfig::load();
@@ -114,7 +117,7 @@ impl SpeakTypeApp {
             input_level: 0.0,
             selected_recording_for_retry: None,
             tray: create_tray(),
-            hidden_to_tray: false,
+            hidden_to_tray: start_hidden_to_tray,
             exit_requested: false,
             scenario_manager: ScenarioManager::with_current(current_scenario),
             history: HistoryManager::load(),
@@ -134,6 +137,10 @@ impl SpeakTypeApp {
         );
         app.audio_devices = app.engine.input_devices();
         app.start_model_job();
+        if start_hidden_to_tray && app.tray.is_none() {
+            app.hidden_to_tray = false;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        }
         app
     }
 
@@ -857,11 +864,13 @@ impl SpeakTypeApp {
         let mut should_save = false;
         let mut should_reload_model = false;
         let mut show_settings_window = self.show_settings_window;
+        let mut pending_startup_update = None;
+        let mut pending_diagnostic_export = false;
 
         egui::Window::new("設定")
             .open(&mut show_settings_window)
             .resizable(true)
-            .default_width(460.0)
+            .default_width(620.0)
             .show(ctx, |ui| {
                 ui.label("PTT");
                 ui.horizontal(|ui| {
@@ -909,6 +918,37 @@ impl SpeakTypeApp {
                         "按住錄音，放開後轉錄",
                     )
                     .changed();
+
+                ui.separator();
+                ui.label("Windows 啟動");
+                if ui
+                    .checkbox(
+                        &mut self.config.startup.launch_on_startup,
+                        "登入 Windows 後自動啟動",
+                    )
+                    .changed()
+                {
+                    pending_startup_update = Some((
+                        self.config.startup.launch_on_startup,
+                        self.config.startup.start_hidden_to_tray,
+                    ));
+                    should_save = true;
+                }
+                if ui
+                    .checkbox(
+                        &mut self.config.startup.start_hidden_to_tray,
+                        "自動啟動時直接進入系統匣",
+                    )
+                    .changed()
+                {
+                    if self.config.startup.launch_on_startup {
+                        pending_startup_update = Some((
+                            self.config.startup.launch_on_startup,
+                            self.config.startup.start_hidden_to_tray,
+                        ));
+                    }
+                    should_save = true;
+                }
 
                 ui.separator();
                 ui.label("麥克風");
@@ -1063,6 +1103,13 @@ impl SpeakTypeApp {
                     .changed();
 
                 ui.separator();
+                should_save |=
+                    draw_vocabulary_settings(ui, &mut self.config.output.vocabulary.entries);
+
+                ui.separator();
+                should_save |= draw_output_rules_settings(ui, &mut self.config.output.rules);
+
+                ui.separator();
                 ui.label("模型");
                 ui.label(format!("模型目錄：{}", paths::models_dir().display()));
                 if ui
@@ -1123,11 +1170,39 @@ impl SpeakTypeApp {
                 }
 
                 ui.separator();
+                ui.label("診斷");
+                if ui.button("匯出診斷包").clicked() {
+                    pending_diagnostic_export = true;
+                }
+                ui.label("診斷包會包含設定、log、最近錯誤、裝置與模型資訊；不包含錄音內容。");
+
+                ui.separator();
                 if ui.button("儲存設定").clicked() {
                     should_save = true;
                 }
             });
 
+        if let Some((enabled, hidden)) = pending_startup_update {
+            if let Err(err) = startup::set_launch_on_startup(enabled, hidden) {
+                self.record_error(err);
+            }
+        }
+        if pending_diagnostic_export {
+            match diagnostics::export_diagnostic_bundle(
+                &self.config,
+                &self.device_status,
+                &self.audio_devices,
+                &self.error_log,
+            ) {
+                Ok(path) => {
+                    self.transcription_status = format!("診斷包已匯出：{}", path.display());
+                    if let Err(err) = diagnostics::open_diagnostic_folder(&path) {
+                        self.record_error(err);
+                    }
+                }
+                Err(err) => self.record_error(format!("匯出診斷包失敗: {err}")),
+            }
+        }
         if should_save {
             self.save_config();
         }
@@ -1336,4 +1411,95 @@ fn format_bytes(bytes: u64) -> String {
     } else {
         format!("{} B", bytes as u64)
     }
+}
+
+fn draw_vocabulary_settings(ui: &mut egui::Ui, entries: &mut Vec<VocabularyEntry>) -> bool {
+    let mut changed = false;
+    let mut remove_index = None;
+
+    ui.label("自訂詞庫 / 專有名詞");
+    ui.label("source 是辨識可能出現的文字，replacement 是要輸出的正式寫法。");
+
+    egui::Grid::new("vocabulary_grid")
+        .num_columns(4)
+        .spacing([8.0, 6.0])
+        .striped(true)
+        .show(ui, |ui| {
+            ui.label("source");
+            ui.label("replacement");
+            ui.label("保護");
+            ui.label("");
+            ui.end_row();
+
+            for (index, entry) in entries.iter_mut().enumerate() {
+                changed |= ui.text_edit_singleline(&mut entry.source).changed();
+                changed |= ui.text_edit_singleline(&mut entry.replacement).changed();
+                changed |= ui.checkbox(&mut entry.protect, "").changed();
+                if ui.button("刪除").clicked() {
+                    remove_index = Some(index);
+                }
+                ui.end_row();
+            }
+        });
+
+    if let Some(index) = remove_index {
+        entries.remove(index);
+        changed = true;
+    }
+
+    ui.horizontal(|ui| {
+        if ui.button("新增詞彙").clicked() {
+            entries.push(VocabularyEntry::blank());
+            changed = true;
+        }
+        if ui.button("清除空白列").clicked() {
+            entries.retain(|entry| !entry.is_blank());
+            changed = true;
+        }
+    });
+
+    if entries.is_empty() {
+        entries.push(VocabularyEntry::blank());
+    }
+
+    changed
+}
+
+fn draw_output_rules_settings(ui: &mut egui::Ui, rules: &mut OutputRulesConfig) -> bool {
+    let mut changed = false;
+
+    ui.label("輸出規則模板");
+    ui.collapsing("聊天", |ui| {
+        changed |= draw_rule_template(ui, &mut rules.chat);
+    });
+    ui.collapsing("寫作", |ui| {
+        changed |= draw_rule_template(ui, &mut rules.writing);
+    });
+    ui.collapsing("程式碼", |ui| {
+        changed |= draw_rule_template(ui, &mut rules.code);
+    });
+
+    changed
+}
+
+fn draw_rule_template(ui: &mut egui::Ui, rules: &mut ScenarioOutputRules) -> bool {
+    let mut changed = false;
+
+    changed |= ui
+        .checkbox(&mut rules.auto_punctuation, "自動標點")
+        .changed();
+    changed |= ui
+        .checkbox(&mut rules.format_paragraphs, "整理段落")
+        .changed();
+    changed |= ui
+        .checkbox(&mut rules.remove_fillers, "去除語助詞")
+        .changed();
+    changed |= ui
+        .checkbox(&mut rules.preserve_code_symbols, "保留英文符號")
+        .changed();
+    changed |= ui
+        .checkbox(&mut rules.auto_line_breaks, "自動加換行")
+        .changed();
+
+    changed
 }

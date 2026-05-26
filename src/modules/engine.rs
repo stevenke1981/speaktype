@@ -4,8 +4,8 @@ use crate::modules::error::log_error;
 use crate::modules::input::InputController;
 use crate::modules::models;
 use crate::modules::paths;
+use crate::modules::postprocess::postprocess_transcription;
 use crate::modules::scenario::Scenario;
-use crate::modules::text_conversion::convert_chinese_text;
 use crate::modules::transcription::Transcriber;
 use chrono::Local;
 use reqwest::blocking::Client;
@@ -452,11 +452,11 @@ pub fn run_transcription_request(
     };
 
     let text = normalize_transcription_text(&text);
-    let text = match convert_chinese_text(&text, request.output.chinese_conversion) {
-        Ok(text) => request.scenario.postprocess(&text),
+    let text = match postprocess_transcription(&text, request.scenario, &request.output) {
+        Ok(text) => text,
         Err(err) => {
-            let error = format!("簡繁用語轉換失敗: {}", err);
-            log_error("text conversion", &error);
+            let error = format!("文字後處理失敗: {}", err);
+            log_error("text postprocess", &error);
             on_event(TranscriptionEvent::Failed(error));
             return;
         }
@@ -569,11 +569,11 @@ fn finish_transcription_text(
     mut on_event: impl FnMut(TranscriptionEvent),
 ) {
     let text = normalize_transcription_text(&text);
-    let text = match convert_chinese_text(&text, request.output.chinese_conversion) {
-        Ok(text) => request.scenario.postprocess(&text),
+    let text = match postprocess_transcription(&text, request.scenario, &request.output) {
+        Ok(text) => text,
         Err(err) => {
-            let error = format!("簡繁用語轉換失敗: {}", err);
-            log_error("text conversion", &error);
+            let error = format!("文字後處理失敗: {}", err);
+            log_error("text postprocess", &error);
             on_event(TranscriptionEvent::Failed(error));
             return;
         }

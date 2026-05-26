@@ -39,6 +39,10 @@ pub struct AppConfig {
     /// 文字輸出與暫存設定
     #[serde(default)]
     pub output: OutputConfig,
+
+    /// Windows 啟動設定
+    #[serde(default)]
+    pub startup: StartupConfig,
 }
 
 impl Default for AppConfig {
@@ -51,6 +55,7 @@ impl Default for AppConfig {
             recording: RecordingConfig::default(),
             hotkeys: HotkeyConfig::default(),
             output: OutputConfig::default(),
+            startup: StartupConfig::default(),
         }
     }
 }
@@ -162,6 +167,14 @@ pub struct OutputConfig {
     /// 轉錄完成後先放在預覽區，由使用者手動送出
     #[serde(default)]
     pub manual_review_before_send: bool,
+
+    /// 自訂詞庫與專有名詞修正
+    #[serde(default)]
+    pub vocabulary: VocabularyConfig,
+
+    /// 各情境的輸出規則模板
+    #[serde(default)]
+    pub rules: OutputRulesConfig,
 }
 
 impl Default for OutputConfig {
@@ -172,6 +185,144 @@ impl Default for OutputConfig {
             restore_clipboard_after_inject: true,
             chinese_conversion: ChineseConversionMode::default(),
             manual_review_before_send: false,
+            vocabulary: VocabularyConfig::default(),
+            rules: OutputRulesConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VocabularyConfig {
+    /// 轉錄後要套用的專有名詞清單
+    #[serde(default)]
+    pub entries: Vec<VocabularyEntry>,
+}
+
+impl Default for VocabularyConfig {
+    fn default() -> Self {
+        Self {
+            entries: vec![VocabularyEntry::blank()],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VocabularyEntry {
+    /// 轉錄或簡繁轉換前可能出現的文字
+    #[serde(default)]
+    pub source: String,
+
+    /// 最終要輸出的正式寫法；空白時沿用 source
+    #[serde(default)]
+    pub replacement: String,
+
+    /// 保護此詞不被簡繁或用語轉換改動
+    #[serde(default = "default_vocabulary_protect")]
+    pub protect: bool,
+}
+
+impl VocabularyEntry {
+    pub fn blank() -> Self {
+        Self {
+            source: String::new(),
+            replacement: String::new(),
+            protect: true,
+        }
+    }
+
+    pub fn is_blank(&self) -> bool {
+        self.source.trim().is_empty() && self.replacement.trim().is_empty()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutputRulesConfig {
+    #[serde(default = "default_chat_rules")]
+    pub chat: ScenarioOutputRules,
+
+    #[serde(default = "default_writing_rules")]
+    pub writing: ScenarioOutputRules,
+
+    #[serde(default = "default_code_rules")]
+    pub code: ScenarioOutputRules,
+}
+
+impl Default for OutputRulesConfig {
+    fn default() -> Self {
+        Self {
+            chat: default_chat_rules(),
+            writing: default_writing_rules(),
+            code: default_code_rules(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScenarioOutputRules {
+    #[serde(default = "default_true")]
+    pub auto_punctuation: bool,
+
+    #[serde(default)]
+    pub format_paragraphs: bool,
+
+    #[serde(default)]
+    pub remove_fillers: bool,
+
+    #[serde(default)]
+    pub preserve_code_symbols: bool,
+
+    #[serde(default)]
+    pub auto_line_breaks: bool,
+}
+
+impl ScenarioOutputRules {
+    pub fn chat() -> Self {
+        Self {
+            auto_punctuation: true,
+            format_paragraphs: false,
+            remove_fillers: false,
+            preserve_code_symbols: false,
+            auto_line_breaks: false,
+        }
+    }
+
+    pub fn writing() -> Self {
+        Self {
+            auto_punctuation: true,
+            format_paragraphs: true,
+            remove_fillers: true,
+            preserve_code_symbols: false,
+            auto_line_breaks: true,
+        }
+    }
+
+    pub fn code() -> Self {
+        Self {
+            auto_punctuation: false,
+            format_paragraphs: false,
+            remove_fillers: false,
+            preserve_code_symbols: true,
+            auto_line_breaks: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StartupConfig {
+    /// 登入 Windows 後自動啟動 SpeakType
+    #[serde(default)]
+    pub launch_on_startup: bool,
+
+    /// 自動啟動時直接進入系統匣
+    #[serde(default = "default_true")]
+    pub start_hidden_to_tray: bool,
+}
+
+impl Default for StartupConfig {
+    fn default() -> Self {
+        Self {
+            launch_on_startup: false,
+            start_hidden_to_tray: true,
         }
     }
 }
@@ -219,6 +370,12 @@ impl AppConfig {
         self.hotkeys.hold_to_record = true;
         if self.get_models_dir() == "models" {
             self.models_dir = default_models_dir();
+        }
+        if self.output.vocabulary.entries.is_empty() {
+            self.output
+                .vocabulary
+                .entries
+                .push(VocabularyEntry::blank());
         }
     }
 
@@ -351,4 +508,24 @@ fn default_auto_inject_focused_window() -> bool {
 
 fn default_restore_clipboard_after_inject() -> bool {
     true
+}
+
+fn default_vocabulary_protect() -> bool {
+    true
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_chat_rules() -> ScenarioOutputRules {
+    ScenarioOutputRules::chat()
+}
+
+fn default_writing_rules() -> ScenarioOutputRules {
+    ScenarioOutputRules::writing()
+}
+
+fn default_code_rules() -> ScenarioOutputRules {
+    ScenarioOutputRules::code()
 }
