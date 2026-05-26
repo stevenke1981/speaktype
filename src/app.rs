@@ -1,6 +1,7 @@
 use eframe::egui;
 use speaktype::modules::config::{AppConfig, ChineseConversionMode, OutputBufferMode};
 use speaktype::modules::engine::SpeakTypeEngine;
+use speaktype::modules::error::{log_error, log_file_path};
 use speaktype::modules::gui::GuiManager;
 use speaktype::modules::history::HistoryManager;
 use speaktype::modules::input::{GlobalHotkey, HotkeyEvent};
@@ -18,6 +19,8 @@ pub struct SpeakTypeApp {
     scratch_text: String,
     show_history_window: bool,
     show_settings_window: bool,
+    show_error_window: bool,
+    error_log: Vec<String>,
     scenario_manager: ScenarioManager,
     history: HistoryManager,
     gui: GuiManager,
@@ -38,10 +41,13 @@ impl SpeakTypeApp {
             .and_then(Scenario::from_name)
             .unwrap_or(Scenario::Chat);
         let model_path = config.get_model_path();
-        let engine = SpeakTypeEngine::new(model_path);
-        let mut device_status = DeviceStatus::detect();
-        device_status.model = engine.model_status_text();
+        let engine = SpeakTypeEngine::new(model_path, config.use_cuda);
+        let device_status = DeviceStatus::detect(engine.model_status_text(), config.use_cuda);
         let last_error = engine.model_error().map(str::to_string);
+        let error_log = last_error.iter().cloned().collect();
+        if let Some(error) = &last_error {
+            log_error("app init", error);
+        }
 
         Self {
             recording: false,
@@ -51,8 +57,10 @@ impl SpeakTypeApp {
             scratch_text: String::new(),
             show_history_window: false,
             show_settings_window: false,
+            show_error_window: false,
+            error_log,
             scenario_manager: ScenarioManager::with_current(current_scenario),
-            history: HistoryManager::new(),
+            history: HistoryManager::load(),
             gui: GuiManager::new(),
             config,
             engine,
@@ -73,7 +81,7 @@ impl SpeakTypeApp {
                 self.recording_start = Some(Instant::now());
             }
             Err(e) => {
-                self.last_error = Some(e);
+                self.record_error(e);
                 self.recording = self.engine.is_recording();
             }
         }
@@ -87,7 +95,7 @@ impl SpeakTypeApp {
                 self.recording_start = Some(Instant::now());
             }
             Err(e) => {
-                self.last_error = Some(e);
+                self.record_error(e);
                 self.recording = self.engine.is_recording();
             }
         }
@@ -100,7 +108,7 @@ impl SpeakTypeApp {
         {
             Ok(text) => self.accept_transcription(text),
             Err(e) => {
-                self.last_error = Some(e);
+                self.record_error(e);
                 self.recording = self.engine.is_recording();
             }
         }
@@ -115,7 +123,7 @@ impl SpeakTypeApp {
         self.history.add_record(
             text,
             self.scenario_manager.current().name().to_string(),
-            0.0,
+            self.engine.last_recording_duration_sec(),
         );
     }
 
@@ -123,15 +131,41 @@ impl SpeakTypeApp {
         self.scenario_manager.select(scenario);
         self.config.last_scenario = Some(scenario.name().to_string());
         if let Err(err) = self.config.save() {
-            self.last_error = Some(format!("儲存設定失敗: {}", err));
+            self.record_error(format!("儲存設定失敗: {}", err));
         }
     }
 
     fn save_config(&mut self) {
         if let Err(err) = self.config.save() {
-            self.last_error = Some(format!("儲存設定失敗: {}", err));
+            self.record_error(format!("儲存設定失敗: {}", err));
         } else {
             self.last_error = None;
+        }
+    }
+
+    fn record_error(&mut self, error: String) {
+        log_error("gui", &error);
+        self.last_error = Some(error.clone());
+        self.error_log.insert(0, error);
+        self.error_log.truncate(50);
+    }
+
+    fn refresh_device_status(&mut self) {
+        self.device_status =
+            DeviceStatus::detect(self.engine.model_status_text(), self.config.use_cuda);
+    }
+
+    fn reload_model_from_config(&mut self) {
+        let model_path = self.config.get_model_path();
+        match self.engine.reload_model(model_path, self.config.use_cuda) {
+            Ok(()) => {
+                self.last_error = None;
+                self.refresh_device_status();
+            }
+            Err(err) => {
+                self.record_error(err);
+                self.refresh_device_status();
+            }
         }
     }
 }
@@ -196,6 +230,12 @@ impl eframe::App for SpeakTypeApp {
                 }
                 if ui.button("設定").clicked() {
                     self.show_settings_window = true;
+                }
+                if ui.button("錯誤紀錄").clicked() {
+                    self.show_error_window = true;
+                }
+                if ui.button("刷新狀態").clicked() {
+                    self.refresh_device_status();
                 }
             });
 
@@ -270,6 +310,7 @@ impl eframe::App for SpeakTypeApp {
 
         self.draw_history_window(ctx);
         self.draw_settings_window(ctx);
+        self.draw_error_window(ctx);
     }
 }
 
@@ -285,13 +326,19 @@ impl SpeakTypeApp {
                     return;
                 }
 
+                if let Some(path) = HistoryManager::history_path() {
+                    ui.label(format!("紀錄檔：{}", path.display()));
+                    ui.separator();
+                }
+
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     for record in self.history.records() {
                         ui.group(|ui| {
                             ui.label(format!(
-                                "{} [{}]",
+                                "{} [{}] {:.1} 秒",
                                 record.timestamp.format("%Y-%m-%d %H:%M:%S"),
-                                record.scenario
+                                record.scenario,
+                                record.duration_sec
                             ));
                             let mut text = record.text.clone();
                             ui.add(
@@ -312,6 +359,7 @@ impl SpeakTypeApp {
 
     fn draw_settings_window(&mut self, ctx: &egui::Context) {
         let mut should_save = false;
+        let mut should_reload_model = false;
 
         egui::Window::new("設定")
             .open(&mut self.show_settings_window)
@@ -394,6 +442,21 @@ impl SpeakTypeApp {
 
                 ui.separator();
                 ui.label("模型");
+                if ui
+                    .checkbox(&mut self.config.use_cuda, "啟用 CUDA 推論")
+                    .changed()
+                {
+                    should_save = true;
+                    should_reload_model = true;
+                }
+                if ui
+                    .button("重新載入目前模型")
+                    .on_hover_text("套用模型名稱、目錄與 CUDA 設定")
+                    .clicked()
+                {
+                    should_save = true;
+                    should_reload_model = true;
+                }
                 ui.horizontal(|ui| {
                     ui.label("名稱");
                     let mut model_name = self.config.get_model_name();
@@ -420,5 +483,36 @@ impl SpeakTypeApp {
         if should_save {
             self.save_config();
         }
+        if should_reload_model {
+            self.reload_model_from_config();
+        }
+    }
+
+    fn draw_error_window(&mut self, ctx: &egui::Context) {
+        egui::Window::new("錯誤紀錄")
+            .open(&mut self.show_error_window)
+            .resizable(true)
+            .default_width(560.0)
+            .show(ctx, |ui| {
+                if let Some(path) = log_file_path() {
+                    ui.label(format!("Log 檔案：{}", path.display()));
+                }
+
+                ui.separator();
+                if self.error_log.is_empty() {
+                    ui.label("目前沒有錯誤紀錄");
+                } else {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        for error in &self.error_log {
+                            ui.colored_label(egui::Color32::RED, error);
+                            ui.separator();
+                        }
+                    });
+                    if ui.button("清除畫面紀錄").clicked() {
+                        self.error_log.clear();
+                        self.last_error = None;
+                    }
+                }
+            });
     }
 }

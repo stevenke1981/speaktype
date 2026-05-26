@@ -1,6 +1,7 @@
 // input/mod.rs - 鍵盤輸入與熱鍵模組
 // 職責：全域熱鍵偵測、PTT 控制、文字自動貼上
 
+use crate::modules::error::log_error;
 use device_query::{DeviceQuery, DeviceState, Keycode};
 use enigo::{Enigo, Key, KeyboardControllable};
 use std::collections::VecDeque;
@@ -141,17 +142,22 @@ impl GlobalHotkey {
                 let next_combo_down = ctrl_down && shift_down && l_down;
                 if next_combo_down != combo_down {
                     combo_down = next_combo_down;
-                    if let Ok(mut events) = events_clone.lock() {
-                        events.push_back(if combo_down {
-                            HotkeyEvent::Pressed
-                        } else {
-                            HotkeyEvent::Released
-                        });
+                    match events_clone.lock() {
+                        Ok(mut events) => {
+                            events.push_back(if combo_down {
+                                HotkeyEvent::Pressed
+                            } else {
+                                HotkeyEvent::Released
+                            });
+                        }
+                        Err(err) => {
+                            log_error("hotkey event queue", err);
+                        }
                     }
                 }
                 hotkey_clone.store(next_combo_down, Ordering::Relaxed);
             }) {
-                eprintln!("[hotkey] rdev 監聽錯誤: {:?}", error);
+                log_error("hotkey listener", format!("{error:?}"));
             }
         });
 
@@ -164,10 +170,15 @@ impl GlobalHotkey {
     }
 
     pub fn poll_record_hotkey_event(&mut self) -> Option<HotkeyEvent> {
-        if let Ok(mut events) = self.events.lock() {
-            if let Some(event) = events.pop_front() {
-                self.last_hotkey_pressed = matches!(event, HotkeyEvent::Pressed);
-                return Some(event);
+        match self.events.lock() {
+            Ok(mut events) => {
+                if let Some(event) = events.pop_front() {
+                    self.last_hotkey_pressed = matches!(event, HotkeyEvent::Pressed);
+                    return Some(event);
+                }
+            }
+            Err(err) => {
+                log_error("hotkey event poll", err);
             }
         }
 

@@ -4,24 +4,29 @@ mod app;
 
 use app::SpeakTypeApp;
 use eframe::NativeOptions;
+use speaktype::modules::error::{install_panic_hook, log_error};
 
-fn main() -> eframe::Result<()> {
+fn main() {
+    install_panic_hook();
+
     let Some(_single_instance) = SingleInstanceGuard::try_acquire() else {
-        return Ok(());
+        return;
     };
 
     let options = NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([420.0, 320.0])
+            .with_inner_size([560.0, 560.0])
             .with_title("SpeakType"),
         ..Default::default()
     };
 
-    eframe::run_native(
+    if let Err(err) = eframe::run_native(
         "SpeakType",
         options,
         Box::new(|cc| Box::new(SpeakTypeApp::new(&cc.egui_ctx))),
-    )
+    ) {
+        log_error("app startup", err);
+    }
 }
 
 struct SingleInstanceGuard {
@@ -39,6 +44,7 @@ impl SingleInstanceGuard {
             let name = wide_null("Global\\SpeakType.SingleInstance");
             let handle = unsafe { CreateMutexW(std::ptr::null(), 1, name.as_ptr()) };
             if handle.is_null() {
+                log_error("single instance", "CreateMutexW returned null handle");
                 return None;
             }
 

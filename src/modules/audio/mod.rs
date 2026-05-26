@@ -1,3 +1,4 @@
+use crate::modules::error::log_error;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::{Arc, Mutex};
 
@@ -78,15 +79,15 @@ impl Recorder {
         self.sample_rate = config.sample_rate().0;
         self.channels = config.channels();
         let buffer = self.buffer.clone();
-        let err_fn = |err| eprintln!("[audio] stream error: {}", err);
+        let err_fn = |err| log_error("audio stream", err);
 
         let stream = match config.sample_format() {
             cpal::SampleFormat::F32 => {
                 let stream = device.build_input_stream(
                     &config.into(),
-                    move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                        let mut buf = buffer.lock().unwrap();
-                        buf.extend_from_slice(data);
+                    move |data: &[f32], _: &cpal::InputCallbackInfo| match buffer.lock() {
+                        Ok(mut buf) => buf.extend_from_slice(data),
+                        Err(err) => log_error("audio buffer lock", err),
                     },
                     err_fn,
                     None,
@@ -95,20 +96,24 @@ impl Recorder {
             }
             cpal::SampleFormat::I16 => device.build_input_stream(
                 &config.into(),
-                move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                    let mut buf = buffer.lock().unwrap();
-                    buf.extend(data.iter().map(|sample| *sample as f32 / i16::MAX as f32));
+                move |data: &[i16], _: &cpal::InputCallbackInfo| match buffer.lock() {
+                    Ok(mut buf) => {
+                        buf.extend(data.iter().map(|sample| *sample as f32 / i16::MAX as f32));
+                    }
+                    Err(err) => log_error("audio buffer lock", err),
                 },
                 err_fn,
                 None,
             )?,
             cpal::SampleFormat::U16 => device.build_input_stream(
                 &config.into(),
-                move |data: &[u16], _: &cpal::InputCallbackInfo| {
-                    let mut buf = buffer.lock().unwrap();
-                    buf.extend(data.iter().map(|sample| {
-                        ((*sample as f32 / u16::MAX as f32) * 2.0 - 1.0).clamp(-1.0, 1.0)
-                    }));
+                move |data: &[u16], _: &cpal::InputCallbackInfo| match buffer.lock() {
+                    Ok(mut buf) => {
+                        buf.extend(data.iter().map(|sample| {
+                            ((*sample as f32 / u16::MAX as f32) * 2.0 - 1.0).clamp(-1.0, 1.0)
+                        }));
+                    }
+                    Err(err) => log_error("audio buffer lock", err),
                 },
                 err_fn,
                 None,
@@ -129,7 +134,13 @@ impl Recorder {
         if let Some(stream) = self.stream.take() {
             drop(stream);
         }
-        let mut buf = self.buffer.lock().unwrap();
+        let mut buf = match self.buffer.lock() {
+            Ok(buf) => buf,
+            Err(err) => {
+                log_error("audio buffer recover", &err);
+                err.into_inner()
+            }
+        };
         let data = buf.clone();
         buf.clear();
         RecordedAudio {

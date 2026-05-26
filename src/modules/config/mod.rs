@@ -1,9 +1,10 @@
 // config/mod.rs - 設定檔持久化模組
 // 職責：儲存與載入使用者設定（情境、模型路徑、熱鍵等）
 
+use crate::modules::error::log_error;
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
-use std::fs;
+use std::fs::{self, File};
 use std::path::PathBuf;
 
 const CONFIG_FILE: &str = "config.toml";
@@ -150,11 +151,20 @@ impl AppConfig {
     pub fn load() -> Self {
         if let Some(path) = Self::config_path() {
             if path.exists() {
-                if let Ok(content) = fs::read_to_string(&path) {
-                    if let Ok(mut config) = toml::from_str::<AppConfig>(&content) {
-                        config.migrate_defaults();
-                        println!("[config] 已載入設定檔: {:?}", path);
-                        return config;
+                match fs::read_to_string(&path) {
+                    Ok(content) => match toml::from_str::<AppConfig>(&content) {
+                        Ok(mut config) => {
+                            config.migrate_defaults();
+                            println!("[config] 已載入設定檔: {:?}", path);
+                            return config;
+                        }
+                        Err(err) => {
+                            log_error("config parse", format!("{}: {}", path.display(), err));
+                            backup_invalid_config(&path);
+                        }
+                    },
+                    Err(err) => {
+                        log_error("config read", format!("{}: {}", path.display(), err));
                     }
                 }
             }
@@ -180,7 +190,12 @@ impl AppConfig {
         }
 
         let content = toml::to_string_pretty(self).map_err(|e| e.to_string())?;
-        fs::write(&path, content).map_err(|e| e.to_string())?;
+        let temp_path = path.with_extension("toml.tmp");
+        fs::write(&temp_path, content).map_err(|e| e.to_string())?;
+        fs::rename(&temp_path, &path).map_err(|e| {
+            let _ = fs::remove_file(&temp_path);
+            e.to_string()
+        })?;
 
         println!("[config] 設定已儲存: {:?}", path);
         Ok(())
@@ -224,6 +239,25 @@ impl AppConfig {
         }
 
         ggml_path
+    }
+}
+
+fn backup_invalid_config(path: &PathBuf) {
+    let backup_path = path.with_extension("toml.invalid");
+    match File::open(path).and_then(|mut input| {
+        let mut output = File::create(&backup_path)?;
+        std::io::copy(&mut input, &mut output)?;
+        Ok(())
+    }) {
+        Ok(()) => {
+            log_error(
+                "config backup",
+                format!("invalid config copied to {}", backup_path.display()),
+            );
+        }
+        Err(err) => {
+            log_error("config backup", format!("{}: {}", path.display(), err));
+        }
     }
 }
 

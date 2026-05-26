@@ -7,9 +7,9 @@ pub struct Transcriber {
 }
 
 impl Transcriber {
-    pub fn new(model_path: &Path) -> Result<Self> {
+    pub fn new(model_path: &Path, use_gpu: bool) -> Result<Self> {
         let params = WhisperContextParameters {
-            use_gpu: true,
+            use_gpu,
             ..Default::default()
         };
         let ctx = WhisperContext::new_with_params(model_path.to_str().unwrap(), params)?;

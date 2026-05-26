@@ -1,5 +1,11 @@
 use cpal::traits::{DeviceTrait, HostTrait};
-use std::path::Path;
+use std::process::Command;
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+#[cfg(windows)]
+use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
 
 #[derive(Debug)]
 pub struct DeviceStatus {
@@ -9,7 +15,7 @@ pub struct DeviceStatus {
 }
 
 impl DeviceStatus {
-    pub fn detect() -> Self {
+    pub fn detect(model: String, use_cuda: bool) -> Self {
         let host = cpal::default_host();
         let microphone = match host.default_input_device() {
             Some(device) => match device.name() {
@@ -19,17 +25,85 @@ impl DeviceStatus {
             None => "未偵測到裝置".to_string(),
         };
 
-        let model_exists = Path::new("models/ggml-large-v3-turbo.bin").exists()
-            || Path::new("models/large-v3-turbo.bin").exists();
-
         Self {
             microphone,
-            gpu: "RTX 3060 Ti (CUDA)：就緒".to_string(),
-            model: if model_exists {
-                "large-v3-turbo：已載入".to_string()
-            } else {
-                "large-v3-turbo：未找到（將自動下載）".to_string()
-            },
+            gpu: detect_gpu(use_cuda),
+            model,
         }
     }
+}
+
+fn detect_gpu(use_cuda: bool) -> String {
+    let Some(name) = query_video_controller_name() else {
+        return if use_cuda {
+            "未偵測到 GPU；CUDA 可能無法使用".to_string()
+        } else {
+            "未啟用 CUDA".to_string()
+        };
+    };
+
+    if !use_cuda {
+        return format!("{name}：已偵測（CUDA 未啟用）");
+    }
+
+    if name.to_ascii_lowercase().contains("nvidia") {
+        format!("{name} (CUDA)：就緒")
+    } else {
+        format!("{name}：已偵測，但未確認 CUDA 支援")
+    }
+}
+
+fn query_video_controller_name() -> Option<String> {
+    query_video_controller_with_wmic().or_else(query_video_controller_with_powershell)
+}
+
+fn query_video_controller_with_wmic() -> Option<String> {
+    let mut command = Command::new("wmic");
+    command.args(["path", "win32_VideoController", "get", "name", "/value"]);
+
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+
+    let output = command.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("Name="))
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .find(|name| {
+            let lower = name.to_ascii_lowercase();
+            !lower.contains("basic display") && !lower.contains("remote display")
+        })
+        .map(ToOwned::to_owned)
+}
+
+fn query_video_controller_with_powershell() -> Option<String> {
+    let mut command = Command::new("powershell");
+    command.args([
+        "-NoProfile",
+        "-Command",
+        "(Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name) -join \"`n\"",
+    ]);
+
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+
+    let output = command.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .find(|name| {
+            let lower = name.to_ascii_lowercase();
+            !lower.contains("basic display") && !lower.contains("remote display")
+        })
+        .map(ToOwned::to_owned)
 }

@@ -1,6 +1,7 @@
 pub mod audio;
 pub mod config;
 pub mod engine;
+pub mod error;
 pub mod gui;
 pub mod history;
 pub mod input;

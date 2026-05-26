@@ -15,7 +15,7 @@ fn main() -> Result<()> {
     }
 
     println!("載入模型: {:?}", model_path);
-    let transcriber = Transcriber::new(&model_path)?;
+    let transcriber = Transcriber::new(&model_path, true)?;
 
     // TODO: 這裡之後會接真實的錄音 buffer
     // 目前先用空的 buffer 測試是否能正常初始化
