@@ -1,5 +1,4 @@
 use crate::modules::error::log_error;
-use std::sync::mpsc::{self, Receiver};
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
@@ -11,7 +10,6 @@ pub const TRAY_EXIT: &str = "speaktype.tray.exit";
 
 pub struct TrayManager {
     _icon: TrayIcon,
-    events: Receiver<TrayAction>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,7 +22,7 @@ pub enum TrayAction {
 }
 
 impl TrayManager {
-    pub fn new(ctx: &egui::Context) -> Result<Self, String> {
+    pub fn new() -> Result<Self, String> {
         let menu = Menu::new();
         let show_main = MenuItem::with_id(TRAY_SHOW_MAIN, "顯示主視窗", true, None);
         let toggle = MenuItem::with_id(TRAY_TOGGLE_RECORDING, "開始 / 停止錄音", true, None);
@@ -49,57 +47,37 @@ impl TrayManager {
             .build()
             .map_err(|err| err.to_string())?;
 
-        let (tx, rx) = mpsc::channel();
-        let menu_tx = tx.clone();
-        let menu_ctx = ctx.clone();
-        MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
-            if let Some(action) = action_from_menu_id(event.id.as_ref()) {
-                match action {
-                    TrayAction::ShowMain
-                    | TrayAction::ToggleRecording
-                    | TrayAction::OpenSettings
-                    | TrayAction::OpenHistory => restore_main_window(),
-                    TrayAction::Exit => {
-                        std::process::exit(0);
-                    }
-                }
-                let _ = menu_tx.send(action);
-                menu_ctx.request_repaint();
-            }
-        }));
-
-        let tray_tx = tx;
-        let tray_ctx = ctx.clone();
-        TrayIconEvent::set_event_handler(Some(move |event| match event {
-            TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            }
-            | TrayIconEvent::DoubleClick {
-                button: MouseButton::Left,
-                ..
-            } => {
-                restore_main_window();
-                let _ = tray_tx.send(TrayAction::ShowMain);
-                tray_ctx.request_repaint();
-            }
-            _ => {}
-        }));
-
-        Ok(Self {
-            _icon: icon,
-            events: rx,
-        })
+        Ok(Self { _icon: icon })
     }
 
     pub fn poll_action(&self) -> Option<TrayAction> {
-        self.events.try_recv().ok()
+        while let Ok(event) = MenuEvent::receiver().try_recv() {
+            if let Some(action) = action_from_menu_id(event.id.as_ref()) {
+                return Some(action);
+            }
+        }
+
+        while let Ok(event) = TrayIconEvent::receiver().try_recv() {
+            match event {
+                TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                }
+                | TrayIconEvent::DoubleClick {
+                    button: MouseButton::Left,
+                    ..
+                } => return Some(TrayAction::ShowMain),
+                _ => {}
+            }
+        }
+
+        None
     }
 }
 
-pub fn create_tray(ctx: &egui::Context) -> Option<TrayManager> {
-    match TrayManager::new(ctx) {
+pub fn create_tray() -> Option<TrayManager> {
+    match TrayManager::new() {
         Ok(tray) => Some(tray),
         Err(err) => {
             log_error("tray init", err);
@@ -116,84 +94,6 @@ fn action_from_menu_id(id: &str) -> Option<TrayAction> {
         TRAY_HISTORY => Some(TrayAction::OpenHistory),
         TRAY_EXIT => Some(TrayAction::Exit),
         _ => None,
-    }
-}
-
-#[cfg(windows)]
-fn restore_main_window() {
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        SetForegroundWindow, ShowWindow, SW_RESTORE,
-    };
-
-    if let Some(hwnd) = current_process_window() {
-        unsafe {
-            ShowWindow(hwnd, SW_RESTORE);
-            SetForegroundWindow(hwnd);
-        }
-    }
-}
-
-#[cfg(not(windows))]
-fn restore_main_window() {}
-
-#[cfg(windows)]
-pub fn minimize_main_window() {
-    use windows_sys::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_MINIMIZE};
-
-    if let Some(hwnd) = current_process_window() {
-        unsafe {
-            ShowWindow(hwnd, SW_MINIMIZE);
-        }
-    }
-}
-
-#[cfg(not(windows))]
-pub fn minimize_main_window() {}
-
-#[cfg(windows)]
-fn current_process_window() -> Option<windows_sys::Win32::Foundation::HWND> {
-    use windows_sys::Win32::Foundation::{HWND, LPARAM};
-    use windows_sys::Win32::System::Threading::GetCurrentProcessId;
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetWindowThreadProcessId, IsWindowVisible,
-    };
-
-    struct WindowSearch {
-        pid: u32,
-        hwnd: HWND,
-    }
-
-    unsafe extern "system" fn enum_window(hwnd: HWND, lparam: LPARAM) -> i32 {
-        let search = unsafe { &mut *(lparam as *mut WindowSearch) };
-        let mut window_pid = 0;
-        unsafe {
-            GetWindowThreadProcessId(hwnd, &mut window_pid);
-        }
-
-        if window_pid == search.pid && unsafe { IsWindowVisible(hwnd) } != 0 {
-            search.hwnd = hwnd;
-            return 0;
-        }
-
-        1
-    }
-
-    let mut search = WindowSearch {
-        pid: unsafe { GetCurrentProcessId() },
-        hwnd: std::ptr::null_mut(),
-    };
-
-    unsafe {
-        EnumWindows(
-            Some(enum_window),
-            &mut search as *mut WindowSearch as LPARAM,
-        );
-    }
-
-    if search.hwnd.is_null() {
-        None
-    } else {
-        Some(search.hwnd)
     }
 }
 

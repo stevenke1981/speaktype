@@ -18,7 +18,7 @@ use speaktype::modules::paths;
 use speaktype::modules::recordings;
 use speaktype::modules::scenario::{Scenario, ScenarioManager};
 use speaktype::modules::startup;
-use speaktype::modules::tray::{create_tray, minimize_main_window, TrayAction, TrayManager};
+use speaktype::modules::tray::{create_tray, TrayAction, TrayManager};
 use speaktype::modules::utils::device::DeviceStatus;
 use std::fs;
 use std::path::Path;
@@ -118,7 +118,7 @@ impl SpeakTypeApp {
             level_monitor: None,
             input_level: 0.0,
             selected_recording_for_retry: None,
-            tray: create_tray(ctx),
+            tray: create_tray(),
             hidden_to_tray: start_hidden_to_tray,
             start_minimized_pending: start_hidden_to_tray,
             restore_guard_until: None,
@@ -396,7 +396,6 @@ impl SpeakTypeApp {
     fn minimize_to_tray(&mut self, ctx: &egui::Context) {
         self.hidden_to_tray = true;
         ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-        minimize_main_window();
     }
 
     fn show_from_tray(&mut self, ctx: &egui::Context) {
@@ -523,7 +522,7 @@ impl SpeakTypeApp {
                     if modifiers.shift {
                         parts.push("Shift".to_string());
                     }
-                    if modifiers.mac_cmd || modifiers.command {
+                    if modifiers.mac_cmd {
                         parts.push("Win".to_string());
                     }
                     parts.push(format!("{key:?}").to_ascii_uppercase());
@@ -545,7 +544,10 @@ impl SpeakTypeApp {
                     self.save_config();
                     self.hotkey_capture = false;
                 }
-                Err(err) => self.record_error(err),
+                Err(err) => {
+                    self.record_error(err);
+                    self.hotkey_capture = false;
+                }
             }
         }
     }

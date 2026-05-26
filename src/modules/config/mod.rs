@@ -367,6 +367,14 @@ impl AppConfig {
         if self.hotkeys.record_toggle.trim().eq_ignore_ascii_case("F2") {
             self.hotkeys.record_toggle = "Ctrl+Shift+L".to_string();
         }
+        if self
+            .hotkeys
+            .record_toggle
+            .trim()
+            .eq_ignore_ascii_case("Ctrl+Shift+Win+L")
+        {
+            self.hotkeys.record_toggle = "Ctrl+Shift+L".to_string();
+        }
         self.hotkeys.hold_to_record = true;
         if self.get_models_dir() == "models" {
             self.models_dir = default_models_dir();
