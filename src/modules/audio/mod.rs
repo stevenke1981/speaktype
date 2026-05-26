@@ -38,23 +38,27 @@ impl RecordedAudio {
 pub struct Recorder {
     host: cpal::Host,
     input_device: Option<cpal::Device>,
+    input_device_name: Option<String>,
     stream: Option<cpal::Stream>,
     buffer: Arc<Mutex<Vec<f32>>>,
     sample_rate: u32,
     channels: u16,
+    gain: f32,
 }
 
 impl Recorder {
-    pub fn new() -> Self {
+    pub fn new(input_device_name: Option<String>, gain: f32) -> Self {
         let host = cpal::default_host();
-        let input_device = host.default_input_device();
+        let input_device = find_input_device(&host, input_device_name.as_deref());
         Self {
             host,
             input_device,
+            input_device_name,
             stream: None,
             buffer: Arc::new(Mutex::new(Vec::new())),
             sample_rate: 16_000,
             channels: 1,
+            gain: gain.max(0.1),
         }
     }
 
@@ -63,6 +67,15 @@ impl Recorder {
             .input_devices()
             .map(|devices| devices.filter_map(|d| d.name().ok()).collect())
             .unwrap_or_default()
+    }
+
+    pub fn set_input_device_name(&mut self, input_device_name: Option<String>) {
+        self.input_device_name = input_device_name;
+        self.input_device = find_input_device(&self.host, self.input_device_name.as_deref());
+    }
+
+    pub fn set_gain(&mut self, gain: f32) {
+        self.gain = gain.max(0.1);
     }
 
     pub fn start_recording(&mut self) -> anyhow::Result<()> {
@@ -79,6 +92,7 @@ impl Recorder {
         self.sample_rate = config.sample_rate().0;
         self.channels = config.channels();
         let buffer = self.buffer.clone();
+        let gain = self.gain;
         let err_fn = |err| log_error("audio stream", err);
 
         let stream = match config.sample_format() {
@@ -86,7 +100,9 @@ impl Recorder {
                 let stream = device.build_input_stream(
                     &config.into(),
                     move |data: &[f32], _: &cpal::InputCallbackInfo| match buffer.lock() {
-                        Ok(mut buf) => buf.extend_from_slice(data),
+                        Ok(mut buf) => {
+                            buf.extend(data.iter().map(|sample| (sample * gain).clamp(-1.0, 1.0)));
+                        }
                         Err(err) => log_error("audio buffer lock", err),
                     },
                     err_fn,
@@ -98,7 +114,9 @@ impl Recorder {
                 &config.into(),
                 move |data: &[i16], _: &cpal::InputCallbackInfo| match buffer.lock() {
                     Ok(mut buf) => {
-                        buf.extend(data.iter().map(|sample| *sample as f32 / i16::MAX as f32));
+                        buf.extend(data.iter().map(|sample| {
+                            ((*sample as f32 / i16::MAX as f32) * gain).clamp(-1.0, 1.0)
+                        }));
                     }
                     Err(err) => log_error("audio buffer lock", err),
                 },
@@ -110,7 +128,8 @@ impl Recorder {
                 move |data: &[u16], _: &cpal::InputCallbackInfo| match buffer.lock() {
                     Ok(mut buf) => {
                         buf.extend(data.iter().map(|sample| {
-                            ((*sample as f32 / u16::MAX as f32) * 2.0 - 1.0).clamp(-1.0, 1.0)
+                            (((*sample as f32 / u16::MAX as f32) * 2.0 - 1.0) * gain)
+                                .clamp(-1.0, 1.0)
                         }));
                     }
                     Err(err) => log_error("audio buffer lock", err),
@@ -177,6 +196,114 @@ fn resample_linear(samples: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
 
 impl Default for Recorder {
     fn default() -> Self {
-        Self::new()
+        Self::new(None, 1.0)
+    }
+}
+
+pub struct LevelMonitor {
+    stream: Option<cpal::Stream>,
+    level: Arc<Mutex<f32>>,
+}
+
+impl LevelMonitor {
+    pub fn start(input_device_name: Option<String>, gain: f32) -> anyhow::Result<Self> {
+        let host = cpal::default_host();
+        let device = find_input_device(&host, input_device_name.as_deref())
+            .ok_or_else(|| anyhow::anyhow!("No input device"))?;
+        let config = device.default_input_config()?;
+        let level = Arc::new(Mutex::new(0.0_f32));
+        let level_for_callback = level.clone();
+        let gain = gain.max(0.1);
+        let err_fn = |err| log_error("audio level stream", err);
+
+        let stream = match config.sample_format() {
+            cpal::SampleFormat::F32 => device.build_input_stream(
+                &config.into(),
+                move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                    update_level(&level_for_callback, data.iter().map(|sample| sample * gain));
+                },
+                err_fn,
+                None,
+            )?,
+            cpal::SampleFormat::I16 => device.build_input_stream(
+                &config.into(),
+                move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                    update_level(
+                        &level_for_callback,
+                        data.iter()
+                            .map(|sample| (*sample as f32 / i16::MAX as f32) * gain),
+                    );
+                },
+                err_fn,
+                None,
+            )?,
+            cpal::SampleFormat::U16 => device.build_input_stream(
+                &config.into(),
+                move |data: &[u16], _: &cpal::InputCallbackInfo| {
+                    update_level(
+                        &level_for_callback,
+                        data.iter()
+                            .map(|sample| ((*sample as f32 / u16::MAX as f32) * 2.0 - 1.0) * gain),
+                    );
+                },
+                err_fn,
+                None,
+            )?,
+            sample_format => {
+                return Err(anyhow::anyhow!(
+                    "Unsupported sample format: {sample_format:?}"
+                ))
+            }
+        };
+
+        stream.play()?;
+        Ok(Self {
+            stream: Some(stream),
+            level,
+        })
+    }
+
+    pub fn level(&self) -> f32 {
+        self.level.lock().map(|level| *level).unwrap_or(0.0)
+    }
+
+    pub fn stop(&mut self) {
+        if let Some(stream) = self.stream.take() {
+            drop(stream);
+        }
+    }
+}
+
+impl Drop for LevelMonitor {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+fn find_input_device(host: &cpal::Host, input_device_name: Option<&str>) -> Option<cpal::Device> {
+    if let Some(name) = input_device_name.filter(|name| !name.trim().is_empty()) {
+        if let Ok(mut devices) = host.input_devices() {
+            if let Some(device) = devices.find(|device| {
+                device
+                    .name()
+                    .map(|device_name| device_name == name)
+                    .unwrap_or(false)
+            }) {
+                return Some(device);
+            }
+        }
+    }
+
+    host.default_input_device()
+}
+
+fn update_level(level: &Arc<Mutex<f32>>, samples: impl Iterator<Item = f32>) {
+    let peak = samples
+        .map(|sample| sample.abs())
+        .fold(0.0_f32, f32::max)
+        .clamp(0.0, 1.0);
+
+    if let Ok(mut current) = level.lock() {
+        *current = (*current * 0.65).max(peak);
     }
 }

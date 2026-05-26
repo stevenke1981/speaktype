@@ -1,13 +1,17 @@
 use eframe::egui;
-use speaktype::modules::config::{AppConfig, ChineseConversionMode, OutputBufferMode};
+use speaktype::modules::audio::LevelMonitor;
+use speaktype::modules::config::{
+    AppConfig, ChineseConversionMode, OutputBufferMode, TranscriptionMode,
+};
 use speaktype::modules::engine::{
-    prepare_model_with_progress, run_transcription_request, ModelDownloadProgress, ModelEvent,
-    SpeakTypeEngine, TranscriptionEvent, TranscriptionRequest, TranscriptionResult,
+    load_recording_wav, ModelDownloadProgress, ModelEvent, ModelWorker, SpeakTypeEngine,
+    TranscriptionEvent, TranscriptionRequest, TranscriptionResult, WorkerEvent,
 };
 use speaktype::modules::error::{log_error, log_file_path};
 use speaktype::modules::gui::GuiManager;
 use speaktype::modules::history::HistoryManager;
 use speaktype::modules::input::{GlobalHotkey, HotkeyCombo, HotkeyEvent};
+use speaktype::modules::models::{self, MODEL_CATALOG};
 use speaktype::modules::paths;
 use speaktype::modules::recordings;
 use speaktype::modules::scenario::{Scenario, ScenarioManager};
@@ -16,9 +20,7 @@ use speaktype::modules::utils::device::DeviceStatus;
 use std::fs;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver};
 use std::sync::Arc;
-use std::thread;
 use std::time::{Duration, Instant};
 
 pub struct SpeakTypeApp {
@@ -31,18 +33,23 @@ pub struct SpeakTypeApp {
     show_settings_window: bool,
     show_error_window: bool,
     show_recordings_window: bool,
+    show_model_manager_window: bool,
     error_log: Vec<String>,
     transcription_status: String,
     transcription_busy: bool,
-    transcription_events: Option<Receiver<TranscriptionEvent>>,
+    transcription_draft: String,
     pending_retry: Option<TranscriptionRequest>,
     pending_preview: Option<String>,
     model_status_message: String,
     model_download: Option<ModelDownloadProgress>,
-    model_events: Option<Receiver<ModelEvent>>,
     model_cancel: Option<Arc<AtomicBool>>,
+    model_worker: ModelWorker,
     hotkey_capture: bool,
     recording_filter: String,
+    audio_devices: Vec<String>,
+    level_monitor: Option<LevelMonitor>,
+    input_level: f32,
+    selected_recording_for_retry: Option<std::path::PathBuf>,
     tray: Option<TrayManager>,
     hidden_to_tray: bool,
     exit_requested: bool,
@@ -89,18 +96,23 @@ impl SpeakTypeApp {
             show_settings_window: false,
             show_error_window: false,
             show_recordings_window: false,
+            show_model_manager_window: false,
             error_log,
             transcription_status: "就緒".to_string(),
             transcription_busy: false,
-            transcription_events: None,
+            transcription_draft: String::new(),
             pending_retry: None,
             pending_preview: None,
             model_status_message: String::new(),
             model_download: None,
-            model_events: None,
             model_cancel: None,
+            model_worker: ModelWorker::start(),
             hotkey_capture: false,
             recording_filter: String::new(),
+            audio_devices: Vec::new(),
+            level_monitor: None,
+            input_level: 0.0,
+            selected_recording_for_retry: None,
             tray: create_tray(),
             hidden_to_tray: false,
             exit_requested: false,
@@ -116,9 +128,12 @@ impl SpeakTypeApp {
         if let Err(err) = app.hotkey.update_hotkey(&record_toggle) {
             app.record_error(format!("快捷鍵設定無效，已使用預設值: {}", err));
         }
-        if !app.engine.model_path().exists() {
-            app.start_model_job();
-        }
+        app.engine.update_audio_config(
+            app.config.recording.input_device_name.clone(),
+            app.config.recording.gain,
+        );
+        app.audio_devices = app.engine.input_devices();
+        app.start_model_job();
         app
     }
 
@@ -228,6 +243,25 @@ impl SpeakTypeApp {
         self.refresh_device_status();
     }
 
+    fn select_model(&mut self, model_name: &str, force_download: bool) {
+        self.config.model_name = Some(model_name.to_string());
+        self.config.models_dir = Some(paths::models_dir().display().to_string());
+        if let Err(err) = self.config.save() {
+            self.record_error(format!("儲存模型設定失敗: {}", err));
+        }
+
+        let model_path = self.config.get_model_path();
+        if force_download && model_path.exists() {
+            if let Err(err) = std::fs::remove_file(&model_path) {
+                self.record_error(format!("刪除舊模型失敗: {}", err));
+            }
+        }
+
+        self.engine.set_model_path(model_path, self.config.use_cuda);
+        self.start_model_job();
+        self.refresh_device_status();
+    }
+
     fn start_model_job(&mut self) {
         if let Some(cancel) = &self.model_cancel {
             cancel.store(true, Ordering::Relaxed);
@@ -236,18 +270,16 @@ impl SpeakTypeApp {
         let model_path = self.config.get_model_path();
         let use_cuda = self.config.use_cuda;
         let cancel = Arc::new(AtomicBool::new(false));
-        let cancel_for_thread = cancel.clone();
-        let (tx, rx) = mpsc::channel();
-        self.model_status_message = "模型準備中...".to_string();
+        self.model_status_message = if model_path.exists() {
+            "模型預載中...".to_string()
+        } else {
+            "模型準備中...".to_string()
+        };
         self.model_download = None;
-        self.model_events = Some(rx);
-        self.model_cancel = Some(cancel);
-
-        thread::spawn(move || {
-            prepare_model_with_progress(&model_path, use_cuda, cancel_for_thread, |event| {
-                let _ = tx.send(event);
-            });
-        });
+        self.model_cancel = Some(cancel.clone());
+        if let Err(err) = self.model_worker.load_model(model_path, use_cuda, cancel) {
+            self.record_error(format!("模型 worker 啟動失敗: {err}"));
+        }
     }
 
     fn start_transcription_job(&mut self, mut request: TranscriptionRequest) {
@@ -255,21 +287,20 @@ impl SpeakTypeApp {
         request.scenario = self.scenario_manager.current();
         request.model_path = self.config.get_model_path();
         request.use_cuda = self.config.use_cuda;
+        request.mode = self.config.recording.transcription_mode;
 
         let retry_request = request.clone();
-        let (tx, rx) = mpsc::channel();
-        self.transcription_events = Some(rx);
         self.transcription_busy = true;
+        self.transcription_draft.clear();
         self.transcription_status = "排入背景轉錄...".to_string();
         self.recording = false;
         self.recording_start = None;
         self.pending_retry = Some(retry_request);
 
-        thread::spawn(move || {
-            run_transcription_request(request, |event| {
-                let _ = tx.send(event);
-            });
-        });
+        if let Err(err) = self.model_worker.transcribe(request) {
+            self.transcription_busy = false;
+            self.record_error(format!("轉錄 worker 啟動失敗: {err}"));
+        }
     }
 
     fn retry_last_transcription(&mut self) {
@@ -278,6 +309,34 @@ impl SpeakTypeApp {
         }
         if let Some(request) = self.pending_retry.clone() {
             self.start_transcription_job(request);
+        }
+    }
+
+    fn retranscribe_recording(&mut self, path: std::path::PathBuf) {
+        if self.transcription_busy {
+            return;
+        }
+
+        match load_recording_wav(&path) {
+            Ok(audio) => {
+                let duration_sec = if audio.sample_rate > 0 && audio.channels > 0 {
+                    audio.samples.len() as f32 / audio.sample_rate as f32 / audio.channels as f32
+                } else {
+                    0.0
+                };
+                let request = TranscriptionRequest {
+                    audio,
+                    output: self.config.output.clone(),
+                    model_path: self.config.get_model_path(),
+                    use_cuda: self.config.use_cuda,
+                    scenario: self.scenario_manager.current(),
+                    mode: self.config.recording.transcription_mode,
+                    duration_sec,
+                };
+                self.selected_recording_for_retry = Some(path);
+                self.start_transcription_job(request);
+            }
+            Err(err) => self.record_error(err),
         }
     }
 
@@ -295,6 +354,30 @@ impl SpeakTypeApp {
                 self.last_error = None;
             }
             Err(err) => self.record_error(err),
+        }
+    }
+
+    fn toggle_level_monitor(&mut self) {
+        if let Some(mut monitor) = self.level_monitor.take() {
+            monitor.stop();
+            self.input_level = 0.0;
+            return;
+        }
+
+        match LevelMonitor::start(
+            self.config.recording.input_device_name.clone(),
+            self.config.recording.gain,
+        ) {
+            Ok(monitor) => {
+                self.level_monitor = Some(monitor);
+            }
+            Err(err) => self.record_error(format!("音量測試失敗: {}", err)),
+        }
+    }
+
+    fn poll_input_level(&mut self) {
+        if let Some(monitor) = &self.level_monitor {
+            self.input_level = monitor.level();
         }
     }
 
@@ -335,41 +418,45 @@ impl SpeakTypeApp {
         }
     }
 
-    fn poll_model_events(&mut self) {
+    fn poll_worker_events(&mut self) {
+        while let Some(event) = self.model_worker.try_recv() {
+            match event {
+                WorkerEvent::Model(event) => self.handle_model_event(event),
+                WorkerEvent::Transcription(event) => self.handle_transcription_event(event),
+            }
+        }
+    }
+
+    fn handle_model_event(&mut self, event: ModelEvent) {
         let mut should_clear = false;
         let mut pending_error = None;
-        if let Some(rx) = &self.model_events {
-            while let Ok(event) = rx.try_recv() {
-                match event {
-                    ModelEvent::Progress(progress) => {
-                        self.model_status_message = "模型下載中...".to_string();
-                        self.model_download = Some(progress);
-                    }
-                    ModelEvent::Ready => {
-                        self.engine.mark_model_ready();
-                        self.model_status_message = "模型已準備完成".to_string();
-                        self.model_download = None;
-                        should_clear = true;
-                    }
-                    ModelEvent::Cancelled => {
-                        self.engine.mark_model_failed("模型下載已取消".to_string());
-                        self.model_status_message = "模型下載已取消".to_string();
-                        self.model_download = None;
-                        should_clear = true;
-                    }
-                    ModelEvent::Failed(err) => {
-                        self.engine.mark_model_failed(err.clone());
-                        pending_error = Some(err);
-                        self.model_status_message = "模型準備失敗".to_string();
-                        self.model_download = None;
-                        should_clear = true;
-                    }
-                }
+        match event {
+            ModelEvent::Progress(progress) => {
+                self.model_status_message = "模型下載中...".to_string();
+                self.model_download = Some(progress);
+            }
+            ModelEvent::Ready => {
+                self.engine.mark_model_ready();
+                self.model_status_message = "模型已常駐準備完成".to_string();
+                self.model_download = None;
+                should_clear = true;
+            }
+            ModelEvent::Cancelled => {
+                self.engine.mark_model_failed("模型下載已取消".to_string());
+                self.model_status_message = "模型下載已取消".to_string();
+                self.model_download = None;
+                should_clear = true;
+            }
+            ModelEvent::Failed(err) => {
+                self.engine.mark_model_failed(err.clone());
+                pending_error = Some(err);
+                self.model_status_message = "模型準備失敗".to_string();
+                self.model_download = None;
+                should_clear = true;
             }
         }
 
         if should_clear {
-            self.model_events = None;
             self.model_cancel = None;
             self.refresh_device_status();
         }
@@ -378,31 +465,21 @@ impl SpeakTypeApp {
         }
     }
 
-    fn poll_transcription_events(&mut self) {
-        let mut completed = None;
-        let mut failed = None;
-
-        if let Some(rx) = &self.transcription_events {
-            while let Ok(event) = rx.try_recv() {
-                match event {
-                    TranscriptionEvent::Status(status) => self.transcription_status = status,
-                    TranscriptionEvent::Completed(result) => completed = Some(result),
-                    TranscriptionEvent::Failed(err) => failed = Some(err),
-                }
+    fn handle_transcription_event(&mut self, event: TranscriptionEvent) {
+        match event {
+            TranscriptionEvent::Status(status) => self.transcription_status = status,
+            TranscriptionEvent::Draft(draft) => {
+                self.transcription_draft = draft;
             }
-        }
-
-        if let Some(result) = completed {
-            self.transcription_busy = false;
-            self.transcription_events = None;
-            self.accept_transcription(result);
-        }
-
-        if let Some(err) = failed {
-            self.transcription_busy = false;
-            self.transcription_events = None;
-            self.transcription_status = "失敗".to_string();
-            self.record_error(err);
+            TranscriptionEvent::Completed(result) => {
+                self.transcription_busy = false;
+                self.accept_transcription(result);
+            }
+            TranscriptionEvent::Failed(err) => {
+                self.transcription_busy = false;
+                self.transcription_status = "失敗".to_string();
+                self.record_error(err);
+            }
         }
     }
 
@@ -497,8 +574,8 @@ fn load_font_bytes(path: &str) -> Option<Vec<u8>> {
 impl eframe::App for SpeakTypeApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.handle_tray_actions(ctx);
-        self.poll_model_events();
-        self.poll_transcription_events();
+        self.poll_worker_events();
+        self.poll_input_level();
         self.capture_hotkey_from_input(ctx);
 
         if ctx.input(|input| input.viewport().close_requested()) && !self.exit_requested {
@@ -518,7 +595,7 @@ impl eframe::App for SpeakTypeApp {
         if self.config.hotkeys.global_hotkey_enabled {
             ctx.request_repaint_after(Duration::from_millis(50));
         }
-        if self.transcription_busy || self.model_events.is_some() {
+        if self.transcription_busy || self.model_cancel.is_some() || self.level_monitor.is_some() {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
 
@@ -543,6 +620,9 @@ impl eframe::App for SpeakTypeApp {
                 }
                 if ui.button("錄音檔").clicked() {
                     self.show_recordings_window = true;
+                }
+                if ui.button("模型中心").clicked() {
+                    self.show_model_manager_window = true;
                 }
                 if ui.button("設定").clicked() {
                     self.show_settings_window = true;
@@ -598,7 +678,7 @@ impl eframe::App for SpeakTypeApp {
             ui.add_space(8.0);
             if ui
                 .add_enabled(
-                    !self.transcription_busy && self.model_events.is_none(),
+                    !self.transcription_busy && self.model_cancel.is_none(),
                     egui::Button::new(if self.recording {
                         format!("停止錄音 ({})", self.config.hotkeys.record_toggle)
                     } else {
@@ -647,6 +727,18 @@ impl eframe::App for SpeakTypeApp {
                 ui.colored_label(egui::Color32::RED, error);
             }
 
+            if !self.transcription_draft.is_empty() {
+                ui.separator();
+                ui.label("快速模式草稿");
+                let mut draft = self.transcription_draft.clone();
+                ui.add(
+                    egui::TextEdit::multiline(&mut draft)
+                        .desired_rows(2)
+                        .desired_width(f32::INFINITY)
+                        .interactive(false),
+                );
+            }
+
             if !self.last_result.is_empty() {
                 ui.separator();
                 ui.label("最近辨識結果");
@@ -676,6 +768,7 @@ impl eframe::App for SpeakTypeApp {
 
         self.draw_history_window(ctx);
         self.draw_settings_window(ctx);
+        self.draw_model_manager_window(ctx);
         self.draw_error_window(ctx);
         self.draw_recordings_window(ctx);
         self.draw_model_download_window(ctx);
@@ -818,6 +911,96 @@ impl SpeakTypeApp {
                     .changed();
 
                 ui.separator();
+                ui.label("麥克風");
+                ui.horizontal(|ui| {
+                    if ui.button("刷新裝置").clicked() {
+                        self.audio_devices = self.engine.input_devices();
+                    }
+                    if ui
+                        .button(if self.level_monitor.is_some() {
+                            "停止音量測試"
+                        } else {
+                            "開始音量測試"
+                        })
+                        .clicked()
+                    {
+                        self.toggle_level_monitor();
+                    }
+                });
+                let selected_device_label = self
+                    .config
+                    .recording
+                    .input_device_name
+                    .clone()
+                    .unwrap_or_else(|| "系統預設".to_string());
+                egui::ComboBox::from_label("輸入裝置")
+                    .selected_text(selected_device_label)
+                    .show_ui(ui, |ui| {
+                        if ui
+                            .selectable_label(
+                                self.config.recording.input_device_name.is_none(),
+                                "系統預設",
+                            )
+                            .clicked()
+                        {
+                            self.config.recording.input_device_name = None;
+                            self.engine.update_audio_config(
+                                self.config.recording.input_device_name.clone(),
+                                self.config.recording.gain,
+                            );
+                            should_save = true;
+                        }
+                        for device in &self.audio_devices {
+                            if ui
+                                .selectable_label(
+                                    self.config.recording.input_device_name.as_ref()
+                                        == Some(device),
+                                    device,
+                                )
+                                .clicked()
+                            {
+                                self.config.recording.input_device_name = Some(device.clone());
+                                self.engine.update_audio_config(
+                                    self.config.recording.input_device_name.clone(),
+                                    self.config.recording.gain,
+                                );
+                                should_save = true;
+                            }
+                        }
+                    });
+                if ui
+                    .add(
+                        egui::Slider::new(&mut self.config.recording.gain, 0.2..=4.0)
+                            .text("錄音增益"),
+                    )
+                    .changed()
+                {
+                    self.engine.update_audio_config(
+                        self.config.recording.input_device_name.clone(),
+                        self.config.recording.gain,
+                    );
+                    should_save = true;
+                }
+                ui.add(egui::ProgressBar::new(self.input_level).text("即時音量"));
+
+                ui.separator();
+                ui.label("轉錄模式");
+                should_save |= ui
+                    .radio_value(
+                        &mut self.config.recording.transcription_mode,
+                        TranscriptionMode::Stable,
+                        "穩定模式：完整錄音檔後轉錄",
+                    )
+                    .changed();
+                should_save |= ui
+                    .radio_value(
+                        &mut self.config.recording.transcription_mode,
+                        TranscriptionMode::Fast,
+                        "快速模式：先顯示草稿狀態，再輸出最終文字",
+                    )
+                    .changed();
+
+                ui.separator();
                 ui.label("文字暫存");
                 should_save |= ui
                     .radio_value(
@@ -954,6 +1137,74 @@ impl SpeakTypeApp {
         self.show_settings_window = show_settings_window;
     }
 
+    fn draw_model_manager_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.show_model_manager_window;
+        let mut selected_model: Option<(&'static str, bool)> = None;
+
+        egui::Window::new("模型管理中心")
+            .open(&mut open)
+            .resizable(true)
+            .default_width(760.0)
+            .show(ctx, |ui| {
+                ui.label(format!("模型資料夾：{}", paths::models_dir().display()));
+                ui.label("SHA256 會針對已安裝檔案即時計算；下載時會使用遠端 ETag 可用資訊做驗證。");
+                ui.separator();
+
+                for entry in MODEL_CATALOG {
+                    let path = models::model_path_for_name(entry.name);
+                    let installed = path.exists();
+                    let current = self.config.get_model_name() == entry.name;
+
+                    ui.group(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.heading(entry.label);
+                            if current {
+                                ui.colored_label(egui::Color32::from_rgb(60, 200, 120), "目前使用");
+                            }
+                            ui.label(entry.approx_size);
+                        });
+                        ui.label(entry.recommendation);
+                        ui.label(format!("URL：{}", models::model_url(entry.file_name)));
+                        ui.label(format!(
+                            "狀態：{}",
+                            if installed { "已安裝" } else { "未下載" }
+                        ));
+
+                        if installed {
+                            match models::sha256_file(&path) {
+                                Ok(hash) => {
+                                    ui.monospace(format!("SHA256：{hash}"));
+                                }
+                                Err(err) => {
+                                    ui.colored_label(
+                                        egui::Color32::RED,
+                                        format!("SHA256 計算失敗：{err}"),
+                                    );
+                                }
+                            }
+                        }
+
+                        ui.horizontal(|ui| {
+                            if ui.button("使用此模型").clicked() {
+                                selected_model = Some((entry.name, false));
+                            }
+                            if ui
+                                .button(if installed { "重新下載" } else { "下載" })
+                                .clicked()
+                            {
+                                selected_model = Some((entry.name, true));
+                            }
+                        });
+                    });
+                }
+            });
+
+        self.show_model_manager_window = open;
+        if let Some((model_name, force_download)) = selected_model {
+            self.select_model(model_name, force_download);
+        }
+    }
+
     fn draw_error_window(&mut self, ctx: &egui::Context) {
         egui::Window::new("錯誤紀錄")
             .open(&mut self.show_error_window)
@@ -1029,6 +1280,9 @@ impl SpeakTypeApp {
                                         error = Some(err);
                                     }
                                 }
+                                if ui.button("重新轉錄").clicked() {
+                                    self.selected_recording_for_retry = Some(file.path.clone());
+                                }
                                 if ui.button("刪除").clicked() {
                                     if let Err(err) = recordings::delete_recording(&file.path) {
                                         error = Some(err);
@@ -1043,10 +1297,13 @@ impl SpeakTypeApp {
         if let Some(error) = error {
             self.record_error(error);
         }
+        if let Some(path) = self.selected_recording_for_retry.take() {
+            self.retranscribe_recording(path);
+        }
     }
 
     fn draw_model_download_window(&mut self, ctx: &egui::Context) {
-        if self.model_events.is_none() {
+        if self.model_cancel.is_none() {
             return;
         }
 

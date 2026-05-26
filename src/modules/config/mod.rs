@@ -2,6 +2,7 @@
 // 職責：儲存與載入使用者設定（情境、模型路徑、熱鍵等）
 
 use crate::modules::error::log_error;
+use crate::modules::models;
 use crate::modules::paths;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
@@ -64,6 +65,18 @@ pub struct RecordingConfig {
     #[serde(default)]
     pub enable_vad: bool,
 
+    /// 指定麥克風名稱；None 使用系統預設
+    #[serde(default)]
+    pub input_device_name: Option<String>,
+
+    /// 錄音增益倍率
+    #[serde(default = "default_recording_gain")]
+    pub gain: f32,
+
+    /// 轉錄模式：穩定或快速
+    #[serde(default)]
+    pub transcription_mode: TranscriptionMode,
+
     /// 錄音檔保留天數，0 表示不依天數刪除
     #[serde(default = "default_recording_retention_days")]
     pub retention_days: u32,
@@ -78,10 +91,21 @@ impl Default for RecordingConfig {
         Self {
             sample_rate: 16000,
             enable_vad: false,
+            input_device_name: None,
+            gain: 1.0,
+            transcription_mode: TranscriptionMode::default(),
             retention_days: 30,
             max_total_mb: 4096,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TranscriptionMode {
+    #[default]
+    Stable,
+    Fast,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -240,22 +264,25 @@ impl AppConfig {
 
     /// 取得預期模型檔路徑。whisper.cpp 模型檔通常以 ggml- 開頭。
     pub fn get_model_path(&self) -> PathBuf {
-        let models_dir = PathBuf::from(self.get_models_dir());
         let model_name = self.get_model_name();
-        let ggml_name = format!("ggml-{}.bin", model_name);
-        let legacy_name = format!("{}.bin", model_name);
+        let catalog_path =
+            PathBuf::from(self.get_models_dir()).join(models::catalog_entry(&model_name).file_name);
+        if catalog_path.exists() {
+            return catalog_path;
+        }
 
-        let ggml_path = models_dir.join(&ggml_name);
+        let models_dir = PathBuf::from(self.get_models_dir());
+        let ggml_path = models_dir.join(format!("ggml-{}.bin", model_name));
         if ggml_path.exists() {
             return ggml_path;
         }
 
-        let legacy_path = models_dir.join(&legacy_name);
+        let legacy_path = models_dir.join(format!("{}.bin", model_name));
         if legacy_path.exists() {
             return legacy_path;
         }
 
-        ggml_path
+        catalog_path
     }
 }
 
@@ -292,6 +319,10 @@ fn default_use_cuda() -> bool {
 
 fn default_sample_rate() -> u32 {
     16000
+}
+
+fn default_recording_gain() -> f32 {
+    1.0
 }
 
 fn default_recording_retention_days() -> u32 {
