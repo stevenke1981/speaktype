@@ -14,13 +14,13 @@ use speaktype::modules::history::HistoryManager;
 use speaktype::modules::input::{GlobalHotkey, HotkeyCombo, HotkeyEvent};
 use speaktype::modules::models::{self, MODEL_CATALOG};
 use speaktype::modules::paths;
-use std::collections::HashMap;
-use std::path::PathBuf;
 use speaktype::modules::recordings;
 use speaktype::modules::scenario::{Scenario, ScenarioManager};
 use speaktype::modules::startup;
 use speaktype::modules::tray::{create_tray, TrayAction, TrayManager};
 use speaktype::modules::utils::device::DeviceStatus;
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -781,13 +781,9 @@ impl eframe::App for SpeakTypeApp {
                     .recording_start
                     .map(|start| start.elapsed().as_secs_f32())
                     .unwrap_or(0.0);
-                gui::draw_recording_overlay(
-                    ctx,
-                    true,
-                    self.input_level,
-                    elapsed,
-                    &mut || self.toggle_recording_action(),
-                );
+                gui::draw_recording_overlay(ctx, true, self.input_level, elapsed, &mut || {
+                    self.toggle_recording_action()
+                });
             }
 
             if !self.scratch_text.is_empty()
@@ -1432,10 +1428,7 @@ impl SpeakTypeApp {
             .default_width(420.0)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
-                ui.label(format!(
-                    "確定要下載模型「{}」嗎？",
-                    model_label
-                ));
+                ui.label(format!("確定要下載模型「{}」嗎？", model_label));
                 ui.add_space(4.0);
                 if let Some(e) = entry {
                     ui.label(format!("檔名：{}", e.file_name));
@@ -1468,5 +1461,3 @@ impl SpeakTypeApp {
         }
     }
 }
-
-

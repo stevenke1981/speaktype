@@ -730,6 +730,112 @@ fn is_sha256_hex(value: &str) -> bool {
     value.len() == 64 && value.chars().all(|ch| ch.is_ascii_hexdigit())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn transcription_result_creation() {
+        let result = TranscriptionResult {
+            text: "hello world".into(),
+            recording_path: PathBuf::from("/tmp/test.wav"),
+            duration_sec: 2.5,
+            delivered: true,
+        };
+        assert_eq!(result.text, "hello world");
+        assert!(result.delivered);
+    }
+
+    #[test]
+    fn transcription_request_creation() {
+        use crate::modules::config::{OutputConfig, TranscriptionMode};
+        let request = TranscriptionRequest {
+            audio: RecordedAudio {
+                samples: vec![0.0; 16000],
+                sample_rate: 16000,
+                channels: 1,
+            },
+            output: OutputConfig::default(),
+            model_path: PathBuf::from("model.bin"),
+            use_cuda: false,
+            scenario: Scenario::Chat,
+            mode: TranscriptionMode::Stable,
+            duration_sec: 1.0,
+        };
+        assert_eq!(request.audio.sample_rate, 16000);
+        assert_eq!(request.audio.samples.len(), 16000);
+    }
+
+    #[test]
+    fn is_valid_sha256_accepts_correct_hash() {
+        let valid = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+        assert!(is_valid_sha256(valid));
+    }
+
+    #[test]
+    fn is_valid_sha256_rejects_short_hash() {
+        assert!(!is_valid_sha256("abc123"));
+    }
+
+    #[test]
+    fn is_valid_sha256_rejects_invalid_chars() {
+        let invalid = "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg";
+        assert!(!is_valid_sha256(invalid));
+    }
+
+    #[test]
+    fn is_valid_sha256_rejects_empty() {
+        assert!(!is_valid_sha256(""));
+    }
+
+    #[test]
+    fn classify_recording_error_access() {
+        let msg = classify_recording_error("access denied: microphone");
+        assert!(msg.contains("權限"));
+    }
+
+    #[test]
+    fn classify_recording_error_device() {
+        let msg = classify_recording_error("no input device found");
+        assert!(msg.contains("找不到可用麥克風"));
+    }
+
+    #[test]
+    fn classify_recording_error_unknown() {
+        let msg = classify_recording_error("something else");
+        assert!(msg.contains("something else"));
+    }
+
+    #[test]
+    fn speaktype_engine_initial_state() {
+        let engine = SpeakTypeEngine::new(PathBuf::from("nonexistent.bin"), false);
+        assert!(!engine.is_recording());
+        assert!(engine.model_error().is_some());
+        assert!(!engine.is_model_ready());
+    }
+
+    #[test]
+    fn speaktype_engine_set_model_path() {
+        let mut engine = SpeakTypeEngine::new(PathBuf::from("nonexistent.bin"), false);
+        engine.set_model_path(PathBuf::from("/tmp/other.bin"), true);
+        assert!(!engine.is_model_ready());
+        assert_eq!(engine.model_status_text(), "模型尚未下載或尚未準備完成");
+    }
+
+    #[test]
+    fn model_download_progress_display() {
+        let progress = ModelDownloadProgress {
+            downloaded_bytes: 500,
+            total_bytes: Some(1000),
+            speed_bytes_per_sec: 100.0,
+            url: "https://example.com/model.bin".into(),
+        };
+        assert_eq!(progress.downloaded_bytes, 500);
+        assert_eq!(progress.total_bytes, Some(1000));
+    }
+}
+
 fn classify_recording_error(error: &str) -> String {
     let lower = error.to_ascii_lowercase();
     if lower.contains("access") || lower.contains("permission") {

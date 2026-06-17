@@ -133,10 +133,7 @@ mod tests {
 
     #[test]
     fn parses_select_all() {
-        assert_eq!(
-            parse_voice_command("全選"),
-            Some(VoiceCommand::SelectAll)
-        );
+        assert_eq!(parse_voice_command("全選"), Some(VoiceCommand::SelectAll));
     }
 
     #[test]
@@ -177,11 +174,14 @@ mod tests {
     fn executes_select_all() {
         let mut mock = MockKeyboard::new();
         execute_voice_command(&VoiceCommand::SelectAll, &mut mock);
-        assert_eq!(mock.keys, vec!["ControlDown", "a", "ControlUp"]);
+        assert_eq!(
+            mock.keys,
+            vec!["ControlDown", "a", "ControlUp"] as Vec<String>
+        );
     }
 
     struct MockKeyboard {
-        keys: Vec<&'static str>,
+        keys: Vec<String>,
     }
 
     impl MockKeyboard {
@@ -193,30 +193,30 @@ mod tests {
     impl KeyboardControllable for MockKeyboard {
         fn key_down(&mut self, key: Key) {
             match key {
-                Key::Control => self.keys.push("ControlDown"),
-                _ => self.keys.push("other_down"),
+                Key::Control => self.keys.push("ControlDown".into()),
+                _ => self.keys.push("other_down".into()),
             }
         }
 
         fn key_up(&mut self, key: Key) {
             match key {
-                Key::Control => self.keys.push("ControlUp"),
-                _ => self.keys.push("other_up"),
+                Key::Control => self.keys.push("ControlUp".into()),
+                _ => self.keys.push("other_up".into()),
             }
         }
 
         fn key_click(&mut self, key: Key) {
             match key {
-                Key::Backspace => self.keys.push("Backspace"),
-                Key::Return => self.keys.push("Return"),
-                Key::Layout(ch) => self.keys.push(Box::leak(ch.to_string().into_boxed_str())),
-                _ => self.keys.push("other_click"),
+                Key::Backspace => self.keys.push("Backspace".into()),
+                Key::Return => self.keys.push("Return".into()),
+                Key::Layout(ch) => self.keys.push(ch.to_string()),
+                _ => self.keys.push("other_click".into()),
             }
         }
 
         fn key_sequence(&mut self, sequence: &str) {
             for ch in sequence.chars() {
-                self.keys.push(Box::leak(ch.to_string().into_boxed_str()));
+                self.keys.push(ch.to_string());
             }
         }
     }

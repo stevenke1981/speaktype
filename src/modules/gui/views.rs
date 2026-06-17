@@ -130,7 +130,11 @@ pub fn draw_recordings_list(
     }
 
     let total_size = files.iter().map(|file| file.size_bytes).sum::<u64>();
-    ui.label(format!("共 {} 筆，{}", files.len(), gui::format_bytes(total_size)));
+    ui.label(format!(
+        "共 {} 筆，{}",
+        files.len(),
+        gui::format_bytes(total_size)
+    ));
 
     egui::ScrollArea::vertical().show(ui, |ui| {
         for file in files {

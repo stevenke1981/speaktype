@@ -83,14 +83,7 @@ impl Default for GuiManager {
 }
 
 pub fn configure_cjk_fonts(ctx: &egui::Context) {
-    let font_candidates = [
-        r"C:\Windows\Fonts\NotoSansTC-VF.ttf",
-        r"C:\Windows\Fonts\msjh.ttc",
-        r"C:\Windows\Fonts\mingliu.ttc",
-        r"C:\Windows\Fonts\simhei.ttf",
-        r"C:\Windows\Fonts\simsun.ttc",
-    ];
-
+    let font_candidates = font_candidates_for_platform();
     let Some((font_name, font_bytes)) = font_candidates
         .iter()
         .find_map(|path| load_font_bytes(path).map(|bytes| (path.to_string(), bytes)))
@@ -112,6 +105,42 @@ pub fn configure_cjk_fonts(ctx: &egui::Context) {
     }
 
     ctx.set_fonts(fonts);
+}
+
+fn font_candidates_for_platform() -> &'static [&'static str] {
+    #[cfg(target_os = "windows")]
+    {
+        &[
+            r"C:\Windows\Fonts\NotoSansTC-VF.ttf",
+            r"C:\Windows\Fonts\msjh.ttc",
+            r"C:\Windows\Fonts\mingliu.ttc",
+            r"C:\Windows\Fonts\simhei.ttf",
+            r"C:\Windows\Fonts\simsun.ttc",
+        ]
+    }
+    #[cfg(target_os = "linux")]
+    {
+        &[
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/opentype/noto/NotoSansTC-Regular.otf",
+            "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+            "/usr/share/fonts/wqy-microhei/wqy-microhei.ttc",
+        ]
+    }
+    #[cfg(target_os = "macos")]
+    {
+        &[
+            "/System/Library/Fonts/PingFang.ttc",
+            "/System/Library/Fonts/STHeiti Light.ttc",
+            "/Library/Fonts/Arial Unicode.ttf",
+        ]
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+    {
+        &[]
+    }
 }
 
 fn load_font_bytes(path: &str) -> Option<Vec<u8>> {
@@ -202,10 +231,7 @@ pub fn draw_recording_overlay(
     let width = 280.0;
     let height = 60.0;
     let screen_size = ctx.screen_rect().size();
-    let pos = egui::pos2(
-        (screen_size.x - width) / 2.0,
-        0.0,
-    );
+    let pos = egui::pos2((screen_size.x - width) / 2.0, 0.0);
 
     egui::Area::new(area_id)
         .fixed_pos(pos)
@@ -227,18 +253,24 @@ pub fn draw_recording_overlay(
 
                     let dot_color = egui::Color32::from_rgb(255, 60, 60);
                     let pulse = ((elapsed_secs * 6.0).sin() * 0.3 + 0.7) as u8;
-                    ui.add(egui::Button::new(
-                        egui::RichText::new("●")
-                            .size(20.0)
-                            .color(egui::Color32::from_rgba_premultiplied(255, 60, 60, pulse)),
-                    ).fill(egui::Color32::TRANSPARENT).frame(false));
+                    ui.add(
+                        egui::Button::new(
+                            egui::RichText::new("●")
+                                .size(20.0)
+                                .color(egui::Color32::from_rgba_premultiplied(255, 60, 60, pulse)),
+                        )
+                        .fill(egui::Color32::TRANSPARENT)
+                        .frame(false),
+                    );
 
                     ui.add_space(8.0);
 
                     ui.vertical(|ui| {
                         ui.add_space(4.0);
                         ui.label(
-                            egui::RichText::new("錄音中").size(14.0).color(egui::Color32::WHITE),
+                            egui::RichText::new("錄音中")
+                                .size(14.0)
+                                .color(egui::Color32::WHITE),
                         );
                         ui.label(
                             egui::RichText::new(format!("{:.1}s", elapsed_secs))
@@ -268,17 +300,18 @@ pub fn draw_recording_overlay(
                     );
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.add(
-                            egui::Button::new(
-                                egui::RichText::new("■")
-                                    .size(16.0)
-                                    .color(egui::Color32::WHITE),
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new("■")
+                                        .size(16.0)
+                                        .color(egui::Color32::WHITE),
+                                )
+                                .fill(egui::Color32::from_rgb(200, 50, 50))
+                                .rounding(egui::Rounding::same(6.0))
+                                .min_size(egui::vec2(36.0, 28.0)),
                             )
-                            .fill(egui::Color32::from_rgb(200, 50, 50))
-                            .rounding(egui::Rounding::same(6.0))
-                            .min_size(egui::vec2(36.0, 28.0)),
-                        )
-                        .clicked()
+                            .clicked()
                         {
                             on_stop();
                         }

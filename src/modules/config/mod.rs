@@ -539,3 +539,93 @@ fn default_writing_rules() -> ScenarioOutputRules {
 fn default_code_rules() -> ScenarioOutputRules {
     ScenarioOutputRules::code()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn app_config_defaults_are_valid() {
+        let config = AppConfig::default();
+        assert_eq!(config.use_cuda, true);
+        assert_eq!(config.hotkeys.record_toggle, "Ctrl+Shift+L");
+        assert_eq!(config.hotkeys.hold_to_record, true);
+        assert_eq!(config.recording.sample_rate, 16000);
+        assert_eq!(config.recording.retention_days, 30);
+        assert_eq!(config.recording.max_total_mb, 4096);
+        assert_eq!(config.output.auto_inject_focused_window, true);
+        assert_eq!(config.output.chinese_conversion, ChineseConversionMode::Disabled);
+        assert_eq!(config.output.buffer_mode, OutputBufferMode::Clipboard);
+    }
+
+    #[test]
+    fn toml_roundtrip() {
+        let config = AppConfig::default();
+        let toml_str = toml::to_string_pretty(&config).unwrap();
+        let parsed: AppConfig = toml::from_str(&toml_str).unwrap();
+        assert_eq!(parsed.use_cuda, config.use_cuda);
+        assert_eq!(parsed.hotkeys.record_toggle, config.hotkeys.record_toggle);
+        assert_eq!(parsed.recording.gain, config.recording.gain);
+        assert_eq!(parsed.output.chinese_conversion, config.output.chinese_conversion);
+    }
+
+    #[test]
+    fn migrate_defaults_updates_legacy_hotkey() {
+        let toml_str = r#"
+            [hotkeys]
+            record_toggle = "F2"
+        "#;
+        let mut config: AppConfig = toml::from_str(toml_str).unwrap();
+        config.migrate_defaults();
+        assert_eq!(config.hotkeys.record_toggle, "Ctrl+Shift+L");
+    }
+
+    #[test]
+    fn migrate_defaults_fixes_old_win_key() {
+        let toml_str = r#"
+            [hotkeys]
+            record_toggle = "Ctrl+Shift+Win+L"
+        "#;
+        let mut config: AppConfig = toml::from_str(toml_str).unwrap();
+        config.migrate_defaults();
+        assert_eq!(config.hotkeys.record_toggle, "Ctrl+Shift+L");
+    }
+
+    #[test]
+    fn migrate_defaults_sets_hold_to_record() {
+        let toml_str = r#"
+            [hotkeys]
+            hold_to_record = false
+        "#;
+        let mut config: AppConfig = toml::from_str(toml_str).unwrap();
+        config.migrate_defaults();
+        assert_eq!(config.hotkeys.hold_to_record, true);
+    }
+
+    #[test]
+    fn vocabulary_entry_blank_detection() {
+        let blank = VocabularyEntry::blank();
+        assert!(blank.is_blank());
+
+        let filled = VocabularyEntry {
+            source: "API".to_string(),
+            replacement: "API".to_string(),
+            protect: true,
+        };
+        assert!(!filled.is_blank());
+    }
+
+    #[test]
+    fn scenario_output_rules_have_sensible_defaults() {
+        let chat = ScenarioOutputRules::chat();
+        assert_eq!(chat.auto_punctuation, true);
+        assert_eq!(chat.remove_fillers, true);
+
+        let code = ScenarioOutputRules::code();
+        assert_eq!(code.preserve_code_symbols, true);
+        assert_eq!(code.auto_punctuation, false);
+
+        let writing = ScenarioOutputRules::writing();
+        assert_eq!(writing.format_paragraphs, true);
+    }
+}
