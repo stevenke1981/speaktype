@@ -13,25 +13,129 @@ pub enum VoiceCommand {
     NextParagraph,
 }
 
-pub fn parse_voice_command(text: &str) -> Option<VoiceCommand> {
-    let trimmed = text.trim().to_string();
-    let normalized = trimmed
+/// 清除語音轉錄中常見的干擾字元（標點、空格），保留中文核心內容
+fn clean_text(text: &str) -> String {
+    text.trim()
         .chars()
-        .filter(|c| !matches!(c, '。' | '，' | '！' | '？' | '.' | ',' | '!' | '?' | ' '))
-        .collect::<String>();
+        .filter(|c| {
+            !matches!(
+                c,
+                '。' | '，' | '！' | '？' | '、' | '；' | '：'
+                    | '.' | ',' | '!' | '?' | ';' | ':'
+                    | ' ' | '\u{3000}' // 全形空格
+                    | '「' | '」' | '『' | '』' | '（' | '）'
+                    | '\u{201c}' | '\u{201d}' // 左右雙引號
+            )
+        })
+        .collect()
+}
 
-    match normalized.as_str() {
-        "刪掉" | "刪除" | "擦掉" | "去掉" => Some(VoiceCommand::Delete),
-        "換行" | "新行" | "下一行" => Some(VoiceCommand::Newline),
-        "句號" => Some(VoiceCommand::Punctuation('。')),
-        "逗號" | "逗点" => Some(VoiceCommand::Punctuation('，')),
-        "問號" | "问号" => Some(VoiceCommand::Punctuation('？')),
-        "驚嘆號" | "感叹号" => Some(VoiceCommand::Punctuation('！')),
-        "全選" | "全选" => Some(VoiceCommand::SelectAll),
-        "復原" | "还原" | "取消" | "撤销" => Some(VoiceCommand::Undo),
-        "下一段" | "新段落" => Some(VoiceCommand::NextParagraph),
-        _ => None,
+/// Whisper 常在指令前插入的無意義前綴詞
+const PREFIX_NOISE: &[&str] = &[
+    "插入", "加入",
+    "辨識", "識別", "辨別",
+    "幫我", "請幫我", "請", "幫",
+    "給我",
+];
+
+/// 剝除前綴干擾詞，直到無法再剝
+fn strip_prefixes(s: &str) -> String {
+    let mut result = s.to_string();
+    loop {
+        let before = result.clone();
+        for prefix in PREFIX_NOISE {
+            if result.starts_with(prefix) {
+                result = result[prefix.len()..].to_string();
+                break;
+            }
+        }
+        if result == before {
+            break;
+        }
     }
+    result
+}
+
+/// 比對指令（已清除干擾後）
+fn match_command(s: &str) -> Option<VoiceCommand> {
+    // ── 刪除 ──
+    // 支援繁體、簡體、常見誤聽（翻掉、擦掉了）
+    if matches!(
+        s,
+        "刪掉" | "刪除" | "擦掉" | "去掉"
+            | "刪除掉" | "刪去了"
+            | "删掉" | "删除了" | "删除"
+            | "翻掉" | "翻掉了"
+            | "擦掉了"
+    ) {
+        return Some(VoiceCommand::Delete);
+    }
+
+    // ── 換行 ──
+    if matches!(s, "換行" | "新行" | "下一行" | "換行符") {
+        return Some(VoiceCommand::Newline);
+    }
+
+    // ── 句號 ──
+    if matches!(s, "句號" | "句好" | "巨號" | "具號" | "句号") {
+        return Some(VoiceCommand::Punctuation('。'));
+    }
+
+    // ── 逗號 ──
+    // Whisper 常見同音變體：豆號、鬥號、斗號、豆浩
+    if matches!(s, "逗號" | "逗点" | "豆號" | "鬥號" | "斗號" | "豆浩" | "逗号") {
+        return Some(VoiceCommand::Punctuation('，'));
+    }
+
+    // ── 問號 ──
+    if matches!(s, "問號" | "问号") {
+        return Some(VoiceCommand::Punctuation('？'));
+    }
+
+    // ── 驚嘆號 ──
+    if matches!(s, "驚嘆號" | "感叹号" | "驚歎號" | "驚嘆好" | "惊叹号") {
+        return Some(VoiceCommand::Punctuation('！'));
+    }
+
+    // ── 全選 ──
+    if matches!(s, "全選" | "全选" | "圈選") {
+        return Some(VoiceCommand::SelectAll);
+    }
+
+    // ── 復原 ──
+    if matches!(s, "復原" | "还原" | "取消" | "撤销" | "復元" | "回復" | "复原") {
+        return Some(VoiceCommand::Undo);
+    }
+
+    // ── 下一段 ──
+    if matches!(s, "下一段" | "新段落" | "下個段落") {
+        return Some(VoiceCommand::NextParagraph);
+    }
+
+    None
+}
+
+/// 比對標準指令及其常見 ASR 同音／近似變體
+pub fn parse_voice_command(text: &str) -> Option<VoiceCommand> {
+    let s = clean_text(text);
+    if s.is_empty() {
+        return None;
+    }
+
+    // 先試直接比對
+    if let Some(cmd) = match_command(&s) {
+        return Some(cmd);
+    }
+
+    // 再試剝除前綴後比對
+    let stripped = strip_prefixes(&s);
+    if stripped != s {
+        if let Some(cmd) = match_command(&stripped) {
+            return Some(cmd);
+        }
+    }
+
+    None
 }
 
 pub fn execute_voice_command(command: &VoiceCommand, input: &mut impl KeyboardControllable) {
@@ -111,6 +215,11 @@ mod tests {
         assert_eq!(parse_voice_command("刪掉"), Some(VoiceCommand::Delete));
         assert_eq!(parse_voice_command("刪除"), Some(VoiceCommand::Delete));
         assert_eq!(parse_voice_command("擦掉"), Some(VoiceCommand::Delete));
+        assert_eq!(parse_voice_command("刪除掉"), Some(VoiceCommand::Delete));
+        // 簡體與常見誤聽
+        assert_eq!(parse_voice_command("删掉"), Some(VoiceCommand::Delete));
+        assert_eq!(parse_voice_command("翻掉"), Some(VoiceCommand::Delete));
+        assert_eq!(parse_voice_command("翻掉了"), Some(VoiceCommand::Delete));
     }
 
     #[test]
@@ -127,6 +236,23 @@ mod tests {
         );
         assert_eq!(
             parse_voice_command("逗號"),
+            Some(VoiceCommand::Punctuation('，'))
+        );
+        // ASR 同音變體
+        assert_eq!(
+            parse_voice_command("豆號"),
+            Some(VoiceCommand::Punctuation('，'))
+        );
+        assert_eq!(
+            parse_voice_command("鬥號"),
+            Some(VoiceCommand::Punctuation('，'))
+        );
+        assert_eq!(
+            parse_voice_command("句好"),
+            Some(VoiceCommand::Punctuation('。'))
+        );
+        assert_eq!(
+            parse_voice_command("豆浩"),
             Some(VoiceCommand::Punctuation('，'))
         );
     }
@@ -157,6 +283,29 @@ mod tests {
     fn ignores_postprocess_noise() {
         assert_eq!(parse_voice_command("刪掉。"), Some(VoiceCommand::Delete));
         assert_eq!(parse_voice_command("刪除！"), Some(VoiceCommand::Delete));
+        assert_eq!(parse_voice_command("刪除掉。"), Some(VoiceCommand::Delete));
+        // 多餘標點應被 clean_text 濾除
+        assert_eq!(
+            parse_voice_command("，豆號。"),
+            Some(VoiceCommand::Punctuation('，'))
+        );
+    }
+
+    #[test]
+    fn strips_prefix_noise() {
+        // 前綴「插入」「辨識」應被剝除
+        assert_eq!(
+            parse_voice_command("插入豆浩"),
+            Some(VoiceCommand::Punctuation('，'))
+        );
+        assert_eq!(
+            parse_voice_command("辨識插入鬥號"),
+            Some(VoiceCommand::Punctuation('，'))
+        );
+        assert_eq!(
+            parse_voice_command("幫我刪掉"),
+            Some(VoiceCommand::Delete)
+        );
     }
 
     #[test]
