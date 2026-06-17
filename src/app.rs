@@ -817,6 +817,7 @@ impl eframe::App for SpeakTypeApp {
         if history_clear_pending {
             self.history.clear();
         }
+        self.draw_settings_window(ctx);
         self.draw_model_manager_window(ctx);
         self.draw_download_confirm_dialog(ctx);
         self.draw_model_download_window(ctx);

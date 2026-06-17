@@ -177,8 +177,12 @@ pub struct OutputConfig {
     pub rules: OutputRulesConfig,
 
     /// 是否啟用語音指令模式
-    #[serde(default)]
+    #[serde(default = "default_voice_commands_enabled")]
     pub voice_commands_enabled: bool,
+}
+
+fn default_voice_commands_enabled() -> bool {
+    true
 }
 
 impl Default for OutputConfig {
