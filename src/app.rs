@@ -10,7 +10,7 @@ use speaktype::modules::engine::{
     TranscriptionEvent, TranscriptionRequest, TranscriptionResult, WorkerEvent,
 };
 use speaktype::modules::error::{log_error, log_file_path};
-use speaktype::modules::gui::GuiManager;
+use speaktype::modules::gui::{self, GuiManager};
 use speaktype::modules::history::HistoryManager;
 use speaktype::modules::input::{GlobalHotkey, HotkeyCombo, HotkeyEvent};
 use speaktype::modules::models::{self, MODEL_CATALOG};
@@ -20,8 +20,6 @@ use speaktype::modules::scenario::{Scenario, ScenarioManager};
 use speaktype::modules::startup;
 use speaktype::modules::tray::{create_tray, TrayAction, TrayManager};
 use speaktype::modules::utils::device::DeviceStatus;
-use std::fs;
-use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -69,7 +67,7 @@ pub struct SpeakTypeApp {
 
 impl SpeakTypeApp {
     pub fn new(ctx: &egui::Context, start_hidden_to_tray: bool) -> Self {
-        configure_cjk_fonts(ctx);
+        gui::configure_cjk_fonts(ctx);
 
         let config = AppConfig::load();
         let current_scenario = config
@@ -553,42 +551,6 @@ impl SpeakTypeApp {
     }
 }
 
-fn configure_cjk_fonts(ctx: &egui::Context) {
-    let font_candidates = [
-        r"C:\Windows\Fonts\NotoSansTC-VF.ttf",
-        r"C:\Windows\Fonts\msjh.ttc",
-        r"C:\Windows\Fonts\mingliu.ttc",
-        r"C:\Windows\Fonts\simhei.ttf",
-        r"C:\Windows\Fonts\simsun.ttc",
-    ];
-
-    let Some((font_name, font_bytes)) = font_candidates
-        .iter()
-        .find_map(|path| load_font_bytes(path).map(|bytes| (path.to_string(), bytes)))
-    else {
-        return;
-    };
-
-    let mut fonts = egui::FontDefinitions::default();
-    fonts
-        .font_data
-        .insert(font_name.clone(), egui::FontData::from_owned(font_bytes));
-
-    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-        fonts
-            .families
-            .entry(family)
-            .or_default()
-            .insert(0, font_name.clone());
-    }
-
-    ctx.set_fonts(fonts);
-}
-
-fn load_font_bytes(path: &str) -> Option<Vec<u8>> {
-    fs::read(Path::new(path)).ok()
-}
-
 impl eframe::App for SpeakTypeApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.handle_tray_actions(ctx);
@@ -820,13 +782,13 @@ impl SpeakTypeApp {
 
         let total = progress
             .total_bytes
-            .map(format_bytes)
+            .map(gui::format_bytes)
             .unwrap_or_else(|| "未知大小".to_string());
         ui.label(format!(
             "{} / {}，{}/s",
-            format_bytes(progress.downloaded_bytes),
+            gui::format_bytes(progress.downloaded_bytes),
             total,
-            format_bytes(progress.speed_bytes_per_sec as u64)
+            gui::format_bytes(progress.speed_bytes_per_sec as u64)
         ));
         ui.label(format!("來源：{}", progress.url));
         ui.horizontal(|ui| {
@@ -1374,7 +1336,7 @@ impl SpeakTypeApp {
                 ui.label(format!(
                     "共 {} 筆，{}",
                     files.len(),
-                    format_bytes(total_size)
+                    gui::format_bytes(total_size)
                 ));
 
                 egui::ScrollArea::vertical().show(ui, |ui| {
@@ -1383,7 +1345,7 @@ impl SpeakTypeApp {
                             ui.horizontal(|ui| {
                                 ui.label(file.modified.format("%Y-%m-%d %H:%M:%S").to_string());
                                 ui.monospace(&file.file_name);
-                                ui.label(format_bytes(file.size_bytes));
+                                ui.label(gui::format_bytes(file.size_bytes));
                             });
                             ui.horizontal(|ui| {
                                 if ui.button("播放").clicked() {
@@ -1429,23 +1391,6 @@ impl SpeakTypeApp {
                     ui.spinner();
                 }
             });
-    }
-}
-
-fn format_bytes(bytes: u64) -> String {
-    const KB: f64 = 1024.0;
-    const MB: f64 = 1024.0 * 1024.0;
-    const GB: f64 = 1024.0 * 1024.0 * 1024.0;
-
-    let bytes = bytes as f64;
-    if bytes >= GB {
-        format!("{:.2} GB", bytes / GB)
-    } else if bytes >= MB {
-        format!("{:.1} MB", bytes / MB)
-    } else if bytes >= KB {
-        format!("{:.1} KB", bytes / KB)
-    } else {
-        format!("{} B", bytes as u64)
     }
 }
 

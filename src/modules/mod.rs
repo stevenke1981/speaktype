@@ -16,4 +16,4 @@ pub mod text_conversion;
 pub mod transcription;
 pub mod tray;
 pub mod utils;
-pub mod whisper;
+
