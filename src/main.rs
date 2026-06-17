@@ -43,13 +43,20 @@ impl SingleInstanceGuard {
             use windows_sys::Win32::System::Threading::CreateMutexW;
 
             let name = wide_null("Global\\SpeakType.SingleInstance");
+            // SAFETY: CreateMutexW is called with a valid wide string and
+            // null security attributes. The returned handle is checked for
+            // null before use and properly closed on error/cleanup.
             let handle = unsafe { CreateMutexW(std::ptr::null(), 1, name.as_ptr()) };
             if handle.is_null() {
                 log_error("single instance", "CreateMutexW returned null handle");
                 return None;
             }
 
+            // SAFETY: GetLastError is called immediately after CreateMutexW,
+            // before any other API call that could overwrite the error code.
             if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+                // SAFETY: handle is known to be valid (non-null) from the
+                // check above, and CloseHandle is the correct cleanup.
                 unsafe {
                     CloseHandle(handle);
                 }
@@ -69,6 +76,8 @@ impl SingleInstanceGuard {
 #[cfg(windows)]
 impl Drop for SingleInstanceGuard {
     fn drop(&mut self) {
+        // SAFETY: self.handle is a valid handle from CreateMutexW; this is
+        // the single cleanup point and is called at most once.
         unsafe {
             windows_sys::Win32::Foundation::CloseHandle(self.handle);
         }

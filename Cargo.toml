@@ -5,6 +5,14 @@ name = "speaktype"
 version = "0.1.0"
 edition = "2021"
 
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+all = "warn"
+unwrap_used = "allow"
+bool_to_int_with_if = "allow"
+
 [dependencies]
 eframe = "0.27"
 egui = "0.27"
