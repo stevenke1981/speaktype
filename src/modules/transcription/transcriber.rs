@@ -40,11 +40,8 @@ impl Transcriber {
         let mut result = String::new();
 
         for i in 0..num_segments {
-            if let Some(segment) = state
-                .get_segment(i)
-                .map_err(|e| format!("讀取轉錄分段失敗: {}", e))?
-            {
-                result.push_str(&segment.to_str_lossy());
+            if let Some(segment) = state.get_segment(i) {
+                result.push_str(segment.to_str().unwrap_or(""));
             }
             result.push(' ');
         }

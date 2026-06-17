@@ -14,6 +14,7 @@ use speaktype::modules::history::HistoryManager;
 use speaktype::modules::input::{GlobalHotkey, HotkeyCombo, HotkeyEvent};
 use speaktype::modules::models::{self, MODEL_CATALOG};
 use speaktype::modules::paths;
+use std::path::PathBuf;
 use speaktype::modules::recordings;
 use speaktype::modules::scenario::{Scenario, ScenarioManager};
 use speaktype::modules::startup;
@@ -254,7 +255,6 @@ impl SpeakTypeApp {
 
     fn select_model(&mut self, model_name: &str, force_download: bool) {
         self.config.model_name = Some(model_name.to_string());
-        self.config.models_dir = Some(paths::models_dir().display().to_string());
         if let Err(err) = self.config.save() {
             self.record_error(format!("儲存模型設定失敗: {}", err));
         }
@@ -1224,8 +1224,9 @@ impl SpeakTypeApp {
                 ui.label("下載時會使用遠端 ETag 可用資訊做驗證；大型模型不會在 GUI 開啟時即時計算 SHA256。");
                 ui.separator();
 
+                let models_base = PathBuf::from(self.config.get_models_dir());
                 for entry in MODEL_CATALOG {
-                    let path = models::model_path_for_name(entry.name);
+                    let path = models_base.join(entry.file_name);
                     let installed = path.exists();
                     let current = self.config.get_model_name() == entry.name;
 
@@ -1246,7 +1247,7 @@ impl SpeakTypeApp {
                         if installed {
                             ui.label(format!("檔案：{}", path.display()));
                             if let Ok(metadata) = std::fs::metadata(&path) {
-                                ui.label(format!("大小：{}", format_bytes(metadata.len())));
+                                ui.label(format!("大小：{}", gui::format_bytes(metadata.len())));
                             }
                         }
 

@@ -376,9 +376,6 @@ impl AppConfig {
             self.hotkeys.record_toggle = "Ctrl+Shift+L".to_string();
         }
         self.hotkeys.hold_to_record = true;
-        if self.get_models_dir() == "models" {
-            self.models_dir = default_models_dir();
-        }
         if self.output.vocabulary.entries.is_empty() {
             self.output
                 .vocabulary
@@ -475,7 +472,7 @@ fn default_model_name() -> Option<String> {
 }
 
 fn default_models_dir() -> Option<String> {
-    Some(paths::models_dir().display().to_string())
+    None
 }
 
 fn default_use_cuda() -> bool {
