@@ -686,16 +686,24 @@ impl eframe::App for SpeakTypeApp {
             if !self.model_status_message.is_empty() {
                 ui.label(format!("模型：{}", self.model_status_message));
             }
+            let model_download_ref = self.model_download.as_ref();
+            let cancel_ref = self.model_cancel.clone();
+            let mut retry_pending = false;
             gui::views::draw_model_download_status(
                 ui,
-                self.model_download.as_ref(),
+                model_download_ref,
                 &mut || {
-                    if let Some(cancel) = &self.model_cancel {
+                    if let Some(cancel) = &cancel_ref {
                         cancel.store(true, Ordering::Relaxed);
                     }
                 },
-                &mut || self.start_model_job(),
+                &mut || {
+                    retry_pending = true;
+                },
             );
+            if retry_pending {
+                self.start_model_job();
+            }
 
             ui.add_space(8.0);
             if ui
@@ -797,25 +805,35 @@ impl eframe::App for SpeakTypeApp {
             }
         });
 
+        let mut history_clear_pending = false;
         gui::views::draw_history_window(
             ctx,
             &mut self.show_history_window,
             &self.history,
-            &mut || self.history.clear(),
+            &mut || {
+                history_clear_pending = true;
+            },
         );
+        if history_clear_pending {
+            self.history.clear();
+        }
         self.draw_model_manager_window(ctx);
         self.draw_download_confirm_dialog(ctx);
         self.draw_model_download_window(ctx);
+        let mut error_clear_pending = false;
         gui::views::draw_error_window(
             ctx,
             &mut self.show_error_window,
             &self.error_log,
-            &log_file_path().unwrap_or(std::path::Path::new("")),
+            &log_file_path().unwrap_or(std::path::PathBuf::new()),
             &mut || {
-                self.error_log.clear();
-                self.last_error = None;
+                error_clear_pending = true;
             },
         );
+        if error_clear_pending {
+            self.error_log.clear();
+            self.last_error = None;
+        }
         self.draw_recordings_window(ctx);
     }
 }
@@ -1336,26 +1354,37 @@ impl SpeakTypeApp {
             return;
         }
 
+        // Extract values before closures to avoid borrow conflicts
+        let progress = self.model_download.as_ref();
+        let cancel_flag = self.model_cancel.clone();
+        let mut retry_pending = false;
+
         egui::Window::new("模型下載")
             .resizable(true)
             .default_width(560.0)
             .show(ctx, |ui| {
                 ui.label(&self.model_status_message);
-                if self.model_download.is_some() {
+                if progress.is_some() {
                     gui::views::draw_model_download_status(
                         ui,
-                        self.model_download.as_ref(),
+                        progress,
                         &mut || {
-                            if let Some(cancel) = &self.model_cancel {
+                            if let Some(cancel) = &cancel_flag {
                                 cancel.store(true, Ordering::Relaxed);
                             }
                         },
-                        &mut || self.start_model_job(),
+                        &mut || {
+                            retry_pending = true;
+                        },
                     );
                 } else {
                     ui.spinner();
                 }
             });
+
+        if retry_pending {
+            self.start_model_job();
+        }
     }
 
     fn draw_download_confirm_dialog(&mut self, ctx: &egui::Context) {
