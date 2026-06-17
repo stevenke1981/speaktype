@@ -1,8 +1,7 @@
 use eframe::egui;
 use speaktype::modules::audio::LevelMonitor;
 use speaktype::modules::config::{
-    AppConfig, ChineseConversionMode, OutputBufferMode, OutputRulesConfig, ScenarioOutputRules,
-    TranscriptionMode, VocabularyEntry,
+    AppConfig, ChineseConversionMode, OutputBufferMode, TranscriptionMode,
 };
 use speaktype::modules::diagnostics;
 use speaktype::modules::engine::{
@@ -581,11 +580,13 @@ impl eframe::App for SpeakTypeApp {
             self.minimize_to_tray(ctx);
         }
 
-        if self.tray.is_some() {
+        if self.hidden_to_tray {
+            ctx.request_repaint_after(Duration::from_millis(500));
+        } else if self.tray.is_some() {
             ctx.request_repaint_after(Duration::from_millis(250));
-        }
-        if self.config.hotkeys.global_hotkey_enabled {
-            ctx.request_repaint_after(Duration::from_millis(50));
+            if self.config.hotkeys.global_hotkey_enabled {
+                ctx.request_repaint_after(Duration::from_millis(50));
+            }
         }
         if self.transcription_busy || self.model_cancel.is_some() || self.level_monitor.is_some() {
             ctx.request_repaint_after(Duration::from_millis(100));
@@ -1095,14 +1096,14 @@ impl SpeakTypeApp {
                             .changed();
 
                         ui.separator();
-                        should_save |= draw_vocabulary_settings(
+                        should_save |= gui::draw_vocabulary_settings(
                             ui,
                             &mut self.config.output.vocabulary.entries,
                         );
 
                         ui.separator();
                         should_save |=
-                            draw_output_rules_settings(ui, &mut self.config.output.rules);
+                            gui::draw_output_rules_settings(ui, &mut self.config.output.rules);
 
                         ui.separator();
                         ui.label("模型");
@@ -1386,93 +1387,4 @@ impl SpeakTypeApp {
     }
 }
 
-fn draw_vocabulary_settings(ui: &mut egui::Ui, entries: &mut Vec<VocabularyEntry>) -> bool {
-    let mut changed = false;
-    let mut remove_index = None;
 
-    ui.label("自訂詞庫 / 專有名詞");
-    ui.label("source 是辨識可能出現的文字，replacement 是要輸出的正式寫法。");
-
-    egui::Grid::new("vocabulary_grid")
-        .num_columns(4)
-        .spacing([8.0, 6.0])
-        .striped(true)
-        .show(ui, |ui| {
-            ui.label("source");
-            ui.label("replacement");
-            ui.label("保護");
-            ui.label("");
-            ui.end_row();
-
-            for (index, entry) in entries.iter_mut().enumerate() {
-                changed |= ui.text_edit_singleline(&mut entry.source).changed();
-                changed |= ui.text_edit_singleline(&mut entry.replacement).changed();
-                changed |= ui.checkbox(&mut entry.protect, "").changed();
-                if ui.button("刪除").clicked() {
-                    remove_index = Some(index);
-                }
-                ui.end_row();
-            }
-        });
-
-    if let Some(index) = remove_index {
-        entries.remove(index);
-        changed = true;
-    }
-
-    ui.horizontal(|ui| {
-        if ui.button("新增詞彙").clicked() {
-            entries.push(VocabularyEntry::blank());
-            changed = true;
-        }
-        if ui.button("清除空白列").clicked() {
-            entries.retain(|entry| !entry.is_blank());
-            changed = true;
-        }
-    });
-
-    if entries.is_empty() {
-        entries.push(VocabularyEntry::blank());
-    }
-
-    changed
-}
-
-fn draw_output_rules_settings(ui: &mut egui::Ui, rules: &mut OutputRulesConfig) -> bool {
-    let mut changed = false;
-
-    ui.label("輸出規則模板");
-    ui.collapsing("聊天", |ui| {
-        changed |= draw_rule_template(ui, &mut rules.chat);
-    });
-    ui.collapsing("寫作", |ui| {
-        changed |= draw_rule_template(ui, &mut rules.writing);
-    });
-    ui.collapsing("程式碼", |ui| {
-        changed |= draw_rule_template(ui, &mut rules.code);
-    });
-
-    changed
-}
-
-fn draw_rule_template(ui: &mut egui::Ui, rules: &mut ScenarioOutputRules) -> bool {
-    let mut changed = false;
-
-    changed |= ui
-        .checkbox(&mut rules.auto_punctuation, "自動標點")
-        .changed();
-    changed |= ui
-        .checkbox(&mut rules.format_paragraphs, "整理段落")
-        .changed();
-    changed |= ui
-        .checkbox(&mut rules.remove_fillers, "去除語助詞")
-        .changed();
-    changed |= ui
-        .checkbox(&mut rules.preserve_code_symbols, "保留英文符號")
-        .changed();
-    changed |= ui
-        .checkbox(&mut rules.auto_line_breaks, "自動加換行")
-        .changed();
-
-    changed
-}

@@ -78,7 +78,7 @@ impl Recorder {
         self.gain = gain.max(0.1);
     }
 
-    pub fn start_recording(&mut self) -> anyhow::Result<()> {
+    pub fn start_recording(&mut self) -> Result<(), String> {
         if self.stream.is_some() {
             return Ok(());
         }
@@ -86,9 +86,11 @@ impl Recorder {
         let device = self
             .input_device
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No input device"))?;
+            .ok_or_else(|| "找不到輸入裝置".to_string())?;
 
-        let config = device.default_input_config()?;
+        let config = device
+            .default_input_config()
+            .map_err(|e| format!("無法取得音訊設定: {}", e))?;
         self.sample_rate = config.sample_rate().0;
         self.channels = config.channels();
         let buffer = self.buffer.clone();
@@ -107,44 +109,49 @@ impl Recorder {
                     },
                     err_fn,
                     None,
-                )?;
+                )
+                .map_err(|e| format!("無法建立音訊串流: {}", e))?;
                 stream
             }
-            cpal::SampleFormat::I16 => device.build_input_stream(
-                &config.into(),
-                move |data: &[i16], _: &cpal::InputCallbackInfo| match buffer.lock() {
-                    Ok(mut buf) => {
-                        buf.extend(data.iter().map(|sample| {
-                            ((*sample as f32 / i16::MAX as f32) * gain).clamp(-1.0, 1.0)
-                        }));
-                    }
-                    Err(err) => log_error("audio buffer lock", err),
-                },
-                err_fn,
-                None,
-            )?,
-            cpal::SampleFormat::U16 => device.build_input_stream(
-                &config.into(),
-                move |data: &[u16], _: &cpal::InputCallbackInfo| match buffer.lock() {
-                    Ok(mut buf) => {
-                        buf.extend(data.iter().map(|sample| {
-                            (((*sample as f32 / u16::MAX as f32) * 2.0 - 1.0) * gain)
-                                .clamp(-1.0, 1.0)
-                        }));
-                    }
-                    Err(err) => log_error("audio buffer lock", err),
-                },
-                err_fn,
-                None,
-            )?,
+            cpal::SampleFormat::I16 => device
+                .build_input_stream(
+                    &config.into(),
+                    move |data: &[i16], _: &cpal::InputCallbackInfo| match buffer.lock() {
+                        Ok(mut buf) => {
+                            buf.extend(data.iter().map(|sample| {
+                                ((*sample as f32 / i16::MAX as f32) * gain).clamp(-1.0, 1.0)
+                            }));
+                        }
+                        Err(err) => log_error("audio buffer lock", err),
+                    },
+                    err_fn,
+                    None,
+                )
+                .map_err(|e| format!("無法建立音訊串流: {}", e))?,
+            cpal::SampleFormat::U16 => device
+                .build_input_stream(
+                    &config.into(),
+                    move |data: &[u16], _: &cpal::InputCallbackInfo| match buffer.lock() {
+                        Ok(mut buf) => {
+                            buf.extend(data.iter().map(|sample| {
+                                (((*sample as f32 / u16::MAX as f32) * 2.0 - 1.0) * gain)
+                                    .clamp(-1.0, 1.0)
+                            }));
+                        }
+                        Err(err) => log_error("audio buffer lock", err),
+                    },
+                    err_fn,
+                    None,
+                )
+                .map_err(|e| format!("無法建立音訊串流: {}", e))?,
             sample_format => {
-                return Err(anyhow::anyhow!(
-                    "Unsupported sample format: {sample_format:?}"
-                ))
+                return Err(format!("不支援的音訊格式: {sample_format:?}"))
             }
         };
 
-        stream.play()?;
+        stream
+            .play()
+            .map_err(|e| format!("無法開始錄音: {}", e))?;
         self.stream = Some(stream);
         Ok(())
     }
@@ -206,57 +213,68 @@ pub struct LevelMonitor {
 }
 
 impl LevelMonitor {
-    pub fn start(input_device_name: Option<String>, gain: f32) -> anyhow::Result<Self> {
+    pub fn start(input_device_name: Option<String>, gain: f32) -> Result<Self, String> {
         let host = cpal::default_host();
         let device = find_input_device(&host, input_device_name.as_deref())
-            .ok_or_else(|| anyhow::anyhow!("No input device"))?;
-        let config = device.default_input_config()?;
+            .ok_or_else(|| "找不到輸入裝置".to_string())?;
+        let config = device
+            .default_input_config()
+            .map_err(|e| format!("無法取得音訊設定: {}", e))?;
         let level = Arc::new(Mutex::new(0.0_f32));
         let level_for_callback = level.clone();
         let gain = gain.max(0.1);
         let err_fn = |err| log_error("audio level stream", err);
 
         let stream = match config.sample_format() {
-            cpal::SampleFormat::F32 => device.build_input_stream(
-                &config.into(),
-                move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                    update_level(&level_for_callback, data.iter().map(|sample| sample * gain));
-                },
-                err_fn,
-                None,
-            )?,
-            cpal::SampleFormat::I16 => device.build_input_stream(
-                &config.into(),
-                move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                    update_level(
-                        &level_for_callback,
-                        data.iter()
-                            .map(|sample| (*sample as f32 / i16::MAX as f32) * gain),
-                    );
-                },
-                err_fn,
-                None,
-            )?,
-            cpal::SampleFormat::U16 => device.build_input_stream(
-                &config.into(),
-                move |data: &[u16], _: &cpal::InputCallbackInfo| {
-                    update_level(
-                        &level_for_callback,
-                        data.iter()
-                            .map(|sample| ((*sample as f32 / u16::MAX as f32) * 2.0 - 1.0) * gain),
-                    );
-                },
-                err_fn,
-                None,
-            )?,
+            cpal::SampleFormat::F32 => device
+                .build_input_stream(
+                    &config.into(),
+                    move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                        update_level(
+                            &level_for_callback,
+                            data.iter().map(|sample| sample * gain),
+                        );
+                    },
+                    err_fn,
+                    None,
+                )
+                .map_err(|e| format!("無法建立音訊串流: {}", e))?,
+            cpal::SampleFormat::I16 => device
+                .build_input_stream(
+                    &config.into(),
+                    move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                        update_level(
+                            &level_for_callback,
+                            data.iter()
+                                .map(|sample| (*sample as f32 / i16::MAX as f32) * gain),
+                        );
+                    },
+                    err_fn,
+                    None,
+                )
+                .map_err(|e| format!("無法建立音訊串流: {}", e))?,
+            cpal::SampleFormat::U16 => device
+                .build_input_stream(
+                    &config.into(),
+                    move |data: &[u16], _: &cpal::InputCallbackInfo| {
+                        update_level(
+                            &level_for_callback,
+                            data.iter()
+                                .map(|sample| ((*sample as f32 / u16::MAX as f32) * 2.0 - 1.0) * gain),
+                        );
+                    },
+                    err_fn,
+                    None,
+                )
+                .map_err(|e| format!("無法建立音訊串流: {}", e))?,
             sample_format => {
-                return Err(anyhow::anyhow!(
-                    "Unsupported sample format: {sample_format:?}"
-                ))
+                return Err(format!("不支援的音訊格式: {sample_format:?}"))
             }
         };
 
-        stream.play()?;
+        stream
+            .play()
+            .map_err(|e| format!("無法開始錄音: {}", e))?;
         Ok(Self {
             stream: Some(stream),
             level,

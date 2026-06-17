@@ -1,6 +1,7 @@
 // gui/mod.rs - egui 介面模組
 // 職責：主視窗 UI、系統匣、狀態顯示、字型設定
 
+use crate::modules::config::{OutputRulesConfig, ScenarioOutputRules, VocabularyEntry};
 use crate::modules::scenario::Scenario;
 use eframe::egui;
 use std::fs;
@@ -130,4 +131,95 @@ pub fn format_bytes(bytes: u64) -> String {
     } else {
         format!("{} B", bytes as u64)
     }
+}
+
+pub fn draw_vocabulary_settings(ui: &mut egui::Ui, entries: &mut Vec<VocabularyEntry>) -> bool {
+    let mut changed = false;
+    let mut remove_index = None;
+
+    ui.label("自訂詞庫 / 專有名詞");
+    ui.label("source 是辨識可能出現的文字，replacement 是要輸出的正式寫法。");
+
+    egui::Grid::new("vocabulary_grid")
+        .num_columns(4)
+        .spacing([8.0, 6.0])
+        .striped(true)
+        .show(ui, |ui| {
+            ui.label("source");
+            ui.label("replacement");
+            ui.label("保護");
+            ui.label("");
+            ui.end_row();
+
+            for (index, entry) in entries.iter_mut().enumerate() {
+                changed |= ui.text_edit_singleline(&mut entry.source).changed();
+                changed |= ui.text_edit_singleline(&mut entry.replacement).changed();
+                changed |= ui.checkbox(&mut entry.protect, "").changed();
+                if ui.button("刪除").clicked() {
+                    remove_index = Some(index);
+                }
+                ui.end_row();
+            }
+        });
+
+    if let Some(index) = remove_index {
+        entries.remove(index);
+        changed = true;
+    }
+
+    ui.horizontal(|ui| {
+        if ui.button("新增詞彙").clicked() {
+            entries.push(VocabularyEntry::blank());
+            changed = true;
+        }
+        if ui.button("清除空白列").clicked() {
+            entries.retain(|entry| !entry.is_blank());
+            changed = true;
+        }
+    });
+
+    if entries.is_empty() {
+        entries.push(VocabularyEntry::blank());
+    }
+
+    changed
+}
+
+pub fn draw_output_rules_settings(ui: &mut egui::Ui, rules: &mut OutputRulesConfig) -> bool {
+    let mut changed = false;
+
+    ui.label("輸出規則模板");
+    ui.collapsing("聊天", |ui| {
+        changed |= draw_rule_template(ui, &mut rules.chat);
+    });
+    ui.collapsing("寫作", |ui| {
+        changed |= draw_rule_template(ui, &mut rules.writing);
+    });
+    ui.collapsing("程式碼", |ui| {
+        changed |= draw_rule_template(ui, &mut rules.code);
+    });
+
+    changed
+}
+
+fn draw_rule_template(ui: &mut egui::Ui, rules: &mut ScenarioOutputRules) -> bool {
+    let mut changed = false;
+
+    changed |= ui
+        .checkbox(&mut rules.auto_punctuation, "自動標點")
+        .changed();
+    changed |= ui
+        .checkbox(&mut rules.format_paragraphs, "整理段落")
+        .changed();
+    changed |= ui
+        .checkbox(&mut rules.remove_fillers, "去除語助詞")
+        .changed();
+    changed |= ui
+        .checkbox(&mut rules.preserve_code_symbols, "保留英文符號")
+        .changed();
+    changed |= ui
+        .checkbox(&mut rules.auto_line_breaks, "自動加換行")
+        .changed();
+
+    changed
 }

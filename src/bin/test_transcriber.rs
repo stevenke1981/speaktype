@@ -1,11 +1,9 @@
-use anyhow::Result;
 use speaktype::modules::transcription::Transcriber;
 use std::path::PathBuf;
 
-fn main() -> Result<()> {
+fn main() -> Result<(), String> {
     println!("=== SpeakType Transcriber Test ===");
 
-    // 預設模型路徑（請根據你的實際位置修改）
     let model_path = PathBuf::from("models/ggml-large-v3-turbo.bin");
 
     if !model_path.exists() {
@@ -17,9 +15,7 @@ fn main() -> Result<()> {
     println!("載入模型: {:?}", model_path);
     let transcriber = Transcriber::new(&model_path, true)?;
 
-    // TODO: 這裡之後會接真實的錄音 buffer
-    // 目前先用空的 buffer 測試是否能正常初始化
-    let dummy_audio: Vec<f32> = vec![0.0; 16000 * 3]; // 3 秒靜音
+    let dummy_audio: Vec<f32> = vec![0.0; 16000 * 3];
 
     println!("開始轉錄測試（3秒靜音）...");
     let result = transcriber.transcribe(&dummy_audio)?;
