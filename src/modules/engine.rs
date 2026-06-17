@@ -5,6 +5,7 @@ use crate::modules::input::InputController;
 use crate::modules::models;
 use crate::modules::paths;
 use crate::modules::postprocess::postprocess_transcription;
+use crate::modules::voice_commands::{execute_voice_command, parse_voice_command, voice_command_label};
 use crate::modules::scenario::Scenario;
 use crate::modules::transcription::Transcriber;
 use chrono::Local;
@@ -500,6 +501,22 @@ fn finish_transcription_text(
     mut on_event: impl FnMut(TranscriptionEvent),
 ) {
     let text = normalize_transcription_text(&text);
+
+    if request.output.voice_commands_enabled {
+        if let Some(command) = parse_voice_command(&text) {
+            on_event(TranscriptionEvent::Status("執行語音指令...".to_string()));
+            let mut input = InputController::new();
+            execute_voice_command(&command, input.enigo());
+            on_event(TranscriptionEvent::Completed(TranscriptionResult {
+                text: format!("[指令] {}", voice_command_label(&command)),
+                recording_path,
+                duration_sec: request.duration_sec,
+                delivered: true,
+            }));
+            return;
+        }
+    }
+
     let text = match postprocess_transcription(&text, request.scenario, &request.output) {
         Ok(text) => text,
         Err(err) => {

@@ -175,6 +175,10 @@ pub struct OutputConfig {
     /// 各情境的輸出規則模板
     #[serde(default)]
     pub rules: OutputRulesConfig,
+
+    /// 是否啟用語音指令模式
+    #[serde(default)]
+    pub voice_commands_enabled: bool,
 }
 
 impl Default for OutputConfig {
@@ -187,6 +191,7 @@ impl Default for OutputConfig {
             manual_review_before_send: false,
             vocabulary: VocabularyConfig::default(),
             rules: OutputRulesConfig::default(),
+            voice_commands_enabled: true,
         }
     }
 }

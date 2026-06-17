@@ -22,6 +22,10 @@ impl InputController {
         }
     }
 
+    pub fn enigo(&mut self) -> &mut Enigo {
+        &mut self.enigo
+    }
+
     /// 將文字貼上到目前焦點視窗
     pub fn paste_text(&mut self, text: &str) -> Result<(), String> {
         if text.is_empty() {

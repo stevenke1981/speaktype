@@ -1099,6 +1099,29 @@ impl SpeakTypeApp {
                             gui::draw_output_rules_settings(ui, &mut self.config.output.rules);
 
                         ui.separator();
+                        ui.label("語音指令");
+                        should_save |= ui
+                            .checkbox(
+                                &mut self.config.output.voice_commands_enabled,
+                                "啟用語音指令（說「刪掉」「換行」「句號」等執行對應動作）",
+                            )
+                            .changed();
+                        if self.config.output.voice_commands_enabled {
+                            let commands = speaktype::modules::voice_commands::available_commands();
+                            ui.indent("voice_commands_list", |ui| {
+                                for cmd in &commands {
+                                    ui.label(format!(
+                                        "「{}」— {}",
+                                        speaktype::modules::voice_commands::voice_command_label(cmd),
+                                        speaktype::modules::voice_commands::voice_command_description(
+                                            cmd,
+                                        ),
+                                    ));
+                                }
+                            });
+                        }
+
+                        ui.separator();
                         ui.label("模型");
                         ui.label(format!("模型目錄：{}", paths::models_dir().display()));
                         if ui
