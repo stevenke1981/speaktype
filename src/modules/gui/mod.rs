@@ -1,6 +1,8 @@
 // gui/mod.rs - egui 介面模組
 // 職責：主視窗 UI、系統匣、狀態顯示、字型設定
 
+pub mod views;
+
 use crate::modules::config::{OutputRulesConfig, ScenarioOutputRules, VocabularyEntry};
 use crate::modules::scenario::Scenario;
 use eframe::egui;
@@ -183,6 +185,107 @@ pub fn draw_vocabulary_settings(ui: &mut egui::Ui, entries: &mut Vec<VocabularyE
     }
 
     changed
+}
+
+pub fn draw_recording_overlay(
+    ctx: &egui::Context,
+    recording: bool,
+    input_level: f32,
+    elapsed_secs: f32,
+    on_stop: &mut dyn FnMut(),
+) {
+    if !recording {
+        return;
+    }
+
+    let area_id = egui::Id::new("recording_pill_overlay");
+    let width = 280.0;
+    let height = 60.0;
+    let screen_size = ctx.screen_rect().size();
+    let pos = egui::pos2(
+        (screen_size.x - width) / 2.0,
+        0.0,
+    );
+
+    egui::Area::new(area_id)
+        .fixed_pos(pos)
+        .movable(false)
+        .show(ctx, |ui| {
+            let frame = egui::Frame::none()
+                .fill(egui::Color32::from_rgba_premultiplied(0, 0, 0, 200))
+                .rounding(egui::Rounding::same(12.0))
+                .shadow(egui::epaint::Shadow {
+                    offset: egui::vec2(0.0, 4.0),
+                    blur: 16.0,
+                    spread: 0.0,
+                    color: egui::Color32::from_black_alpha(60),
+                });
+            frame.show(ui, |ui| {
+                ui.set_min_size(egui::vec2(width, height));
+                ui.horizontal(|ui| {
+                    ui.add_space(12.0);
+
+                    let dot_color = egui::Color32::from_rgb(255, 60, 60);
+                    let pulse = ((elapsed_secs * 6.0).sin() * 0.3 + 0.7) as u8;
+                    ui.add(egui::Button::new(
+                        egui::RichText::new("●")
+                            .size(20.0)
+                            .color(egui::Color32::from_rgba_premultiplied(255, 60, 60, pulse)),
+                    ).fill(egui::Color32::TRANSPARENT).frame(false));
+
+                    ui.add_space(8.0);
+
+                    ui.vertical(|ui| {
+                        ui.add_space(4.0);
+                        ui.label(
+                            egui::RichText::new("錄音中").size(14.0).color(egui::Color32::WHITE),
+                        );
+                        ui.label(
+                            egui::RichText::new(format!("{:.1}s", elapsed_secs))
+                                .size(11.0)
+                                .color(egui::Color32::GRAY),
+                        );
+                    });
+
+                    ui.add_space(8.0);
+
+                    let bar_width = 100.0;
+                    let bar_height = 6.0;
+                    let level = input_level.clamp(0.0, 1.0);
+                    let (r, g, b) = if level < 0.5 {
+                        (60, 200, 60)
+                    } else if level < 0.8 {
+                        (220, 200, 40)
+                    } else {
+                        (255, 80, 60)
+                    };
+                    ui.add(
+                        egui::ProgressBar::new(level)
+                            .desired_width(bar_width)
+                            .desired_height(bar_height)
+                            .fill(egui::Color32::from_rgb(r, g, b))
+                            .text(""),
+                    );
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.add(
+                            egui::Button::new(
+                                egui::RichText::new("■")
+                                    .size(16.0)
+                                    .color(egui::Color32::WHITE),
+                            )
+                            .fill(egui::Color32::from_rgb(200, 50, 50))
+                            .rounding(egui::Rounding::same(6.0))
+                            .min_size(egui::vec2(36.0, 28.0)),
+                        )
+                        .clicked()
+                        {
+                            on_stop();
+                        }
+                    });
+                });
+            });
+        });
 }
 
 pub fn draw_output_rules_settings(ui: &mut egui::Ui, rules: &mut OutputRulesConfig) -> bool {

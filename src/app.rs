@@ -686,7 +686,16 @@ impl eframe::App for SpeakTypeApp {
             if !self.model_status_message.is_empty() {
                 ui.label(format!("模型：{}", self.model_status_message));
             }
-            self.draw_model_download_status(ui);
+            gui::views::draw_model_download_status(
+                ui,
+                self.model_download.as_ref(),
+                &mut || {
+                    if let Some(cancel) = &self.model_cancel {
+                        cancel.store(true, Ordering::Relaxed);
+                    }
+                },
+                &mut || self.start_model_job(),
+            );
 
             ui.add_space(8.0);
             if ui
@@ -724,12 +733,7 @@ impl eframe::App for SpeakTypeApp {
             });
 
             if self.recording {
-                let elapsed = self
-                    .recording_start
-                    .map(|start| start.elapsed().as_secs_f32())
-                    .unwrap_or(0.0);
-                ui.label(format!("錄音中：{:.1} 秒", elapsed));
-                ctx.request_repaint_after(Duration::from_millis(100));
+                ctx.request_repaint_after(Duration::from_millis(50));
             }
 
             if let Some(path) = self.engine.last_recording_path() {
@@ -764,6 +768,20 @@ impl eframe::App for SpeakTypeApp {
                 );
             }
 
+            if self.recording {
+                let elapsed = self
+                    .recording_start
+                    .map(|start| start.elapsed().as_secs_f32())
+                    .unwrap_or(0.0);
+                gui::draw_recording_overlay(
+                    ctx,
+                    true,
+                    self.input_level,
+                    elapsed,
+                    &mut || self.toggle_recording_action(),
+                );
+            }
+
             if !self.scratch_text.is_empty()
                 && self.config.output.buffer_mode == OutputBufferMode::Temporary
             {
@@ -779,94 +797,30 @@ impl eframe::App for SpeakTypeApp {
             }
         });
 
-        self.draw_history_window(ctx);
-        self.draw_settings_window(ctx);
+        gui::views::draw_history_window(
+            ctx,
+            &mut self.show_history_window,
+            &self.history,
+            &mut || self.history.clear(),
+        );
         self.draw_model_manager_window(ctx);
-        self.draw_error_window(ctx);
-        self.draw_recordings_window(ctx);
-        self.draw_model_download_window(ctx);
         self.draw_download_confirm_dialog(ctx);
+        self.draw_model_download_window(ctx);
+        gui::views::draw_error_window(
+            ctx,
+            &mut self.show_error_window,
+            &self.error_log,
+            &log_file_path().unwrap_or(std::path::Path::new("")),
+            &mut || {
+                self.error_log.clear();
+                self.last_error = None;
+            },
+        );
+        self.draw_recordings_window(ctx);
     }
 }
 
 impl SpeakTypeApp {
-    fn draw_model_download_status(&mut self, ui: &mut egui::Ui) {
-        let Some(progress) = &self.model_download else {
-            return;
-        };
-
-        let fraction = progress
-            .total_bytes
-            .map(|total| progress.downloaded_bytes as f32 / total.max(1) as f32)
-            .unwrap_or(0.0)
-            .clamp(0.0, 1.0);
-        ui.add(egui::ProgressBar::new(fraction).show_percentage());
-
-        let total = progress
-            .total_bytes
-            .map(gui::format_bytes)
-            .unwrap_or_else(|| "未知大小".to_string());
-        ui.label(format!(
-            "{} / {}，{}/s",
-            gui::format_bytes(progress.downloaded_bytes),
-            total,
-            gui::format_bytes(progress.speed_bytes_per_sec as u64)
-        ));
-        ui.label(format!("來源：{}", progress.url));
-        ui.horizontal(|ui| {
-            if ui.button("取消下載").clicked() {
-                if let Some(cancel) = &self.model_cancel {
-                    cancel.store(true, Ordering::Relaxed);
-                }
-            }
-            if ui.button("重試下載").clicked() {
-                self.start_model_job();
-            }
-        });
-    }
-
-    fn draw_history_window(&mut self, ctx: &egui::Context) {
-        egui::Window::new("辨識紀錄")
-            .open(&mut self.show_history_window)
-            .resizable(true)
-            .default_width(520.0)
-            .show(ctx, |ui| {
-                if self.history.records().is_empty() {
-                    ui.label("尚無紀錄");
-                    return;
-                }
-
-                if let Some(path) = HistoryManager::history_path() {
-                    ui.label(format!("紀錄檔：{}", path.display()));
-                    ui.separator();
-                }
-
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    for record in self.history.records() {
-                        ui.group(|ui| {
-                            ui.label(format!(
-                                "{} [{}] {:.1} 秒",
-                                record.timestamp.format("%Y-%m-%d %H:%M:%S"),
-                                record.scenario,
-                                record.duration_sec
-                            ));
-                            let mut text = record.text.clone();
-                            ui.add(
-                                egui::TextEdit::multiline(&mut text)
-                                    .desired_width(f32::INFINITY)
-                                    .interactive(false),
-                            );
-                        });
-                    }
-                });
-
-                ui.separator();
-                if ui.button("清除紀錄").clicked() {
-                    self.history.clear();
-                }
-            });
-    }
-
     fn draw_settings_window(&mut self, ctx: &egui::Context) {
         let mut should_save = false;
         let mut should_reload_model = false;
@@ -1308,34 +1262,6 @@ impl SpeakTypeApp {
         }
     }
 
-    fn draw_error_window(&mut self, ctx: &egui::Context) {
-        egui::Window::new("錯誤紀錄")
-            .open(&mut self.show_error_window)
-            .resizable(true)
-            .default_width(560.0)
-            .show(ctx, |ui| {
-                if let Some(path) = log_file_path() {
-                    ui.label(format!("Log 檔案：{}", path.display()));
-                }
-
-                ui.separator();
-                if self.error_log.is_empty() {
-                    ui.label("目前沒有錯誤紀錄");
-                } else {
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        for error in &self.error_log {
-                            ui.colored_label(egui::Color32::RED, error);
-                            ui.separator();
-                        }
-                    });
-                    if ui.button("清除畫面紀錄").clicked() {
-                        self.error_log.clear();
-                        self.last_error = None;
-                    }
-                }
-            });
-    }
-
     fn draw_recordings_window(&mut self, ctx: &egui::Context) {
         let mut error = None;
 
@@ -1416,7 +1342,16 @@ impl SpeakTypeApp {
             .show(ctx, |ui| {
                 ui.label(&self.model_status_message);
                 if self.model_download.is_some() {
-                    self.draw_model_download_status(ui);
+                    gui::views::draw_model_download_status(
+                        ui,
+                        self.model_download.as_ref(),
+                        &mut || {
+                            if let Some(cancel) = &self.model_cancel {
+                                cancel.store(true, Ordering::Relaxed);
+                            }
+                        },
+                        &mut || self.start_model_job(),
+                    );
                 } else {
                     ui.spinner();
                 }

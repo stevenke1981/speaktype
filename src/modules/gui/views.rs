@@ -1,0 +1,157 @@
+use crate::modules::gui;
+use crate::modules::history::HistoryManager;
+use crate::modules::recordings::{self, RecordingFile};
+use eframe::egui;
+use std::path::Path;
+
+pub fn draw_history_window(
+    ctx: &egui::Context,
+    open: &mut bool,
+    history: &HistoryManager,
+    on_clear: &mut dyn FnMut(),
+) {
+    egui::Window::new("辨識紀錄")
+        .open(open)
+        .resizable(true)
+        .default_width(520.0)
+        .show(ctx, |ui| {
+            if history.records().is_empty() {
+                ui.label("尚無紀錄");
+                return;
+            }
+
+            if let Some(path) = HistoryManager::history_path() {
+                ui.label(format!("紀錄檔：{}", path.display()));
+                ui.separator();
+            }
+
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                for record in history.records() {
+                    ui.group(|ui| {
+                        ui.label(format!(
+                            "{} [{}] {:.1} 秒",
+                            record.timestamp.format("%Y-%m-%d %H:%M:%S"),
+                            record.scenario,
+                            record.duration_sec
+                        ));
+                        let mut text = record.text.clone();
+                        ui.add(
+                            egui::TextEdit::multiline(&mut text)
+                                .desired_width(f32::INFINITY)
+                                .interactive(false),
+                        );
+                    });
+                }
+            });
+
+            ui.separator();
+            if ui.button("清除紀錄").clicked() {
+                on_clear();
+            }
+        });
+}
+
+pub fn draw_error_window(
+    ctx: &egui::Context,
+    open: &mut bool,
+    errors: &[String],
+    log_path: &Path,
+    on_clear: &mut dyn FnMut(),
+) {
+    egui::Window::new("錯誤紀錄")
+        .open(open)
+        .resizable(true)
+        .default_width(560.0)
+        .show(ctx, |ui| {
+            ui.label(format!("Log 檔案：{}", log_path.display()));
+            ui.separator();
+            if errors.is_empty() {
+                ui.label("目前沒有錯誤紀錄");
+            } else {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    for error in errors {
+                        ui.colored_label(egui::Color32::RED, error);
+                        ui.separator();
+                    }
+                });
+                if ui.button("清除畫面紀錄").clicked() {
+                    on_clear();
+                }
+            }
+        });
+}
+
+pub fn draw_model_download_status(
+    ui: &mut egui::Ui,
+    progress: Option<&crate::modules::engine::ModelDownloadProgress>,
+    on_cancel: &mut dyn FnMut(),
+    on_retry: &mut dyn FnMut(),
+) {
+    let Some(progress) = progress else { return };
+
+    let fraction = progress
+        .total_bytes
+        .map(|total| progress.downloaded_bytes as f32 / total.max(1) as f32)
+        .unwrap_or(0.0)
+        .clamp(0.0, 1.0);
+    ui.add(egui::ProgressBar::new(fraction).show_percentage());
+
+    let total = progress
+        .total_bytes
+        .map(gui::format_bytes)
+        .unwrap_or_else(|| "未知大小".to_string());
+    ui.label(format!(
+        "{} / {}，{}/s",
+        gui::format_bytes(progress.downloaded_bytes),
+        total,
+        gui::format_bytes(progress.speed_bytes_per_sec as u64)
+    ));
+    ui.label(format!("來源：{}", progress.url));
+    ui.horizontal(|ui| {
+        if ui.button("取消下載").clicked() {
+            on_cancel();
+        }
+        if ui.button("重試下載").clicked() {
+            on_retry();
+        }
+    });
+}
+
+pub fn draw_recordings_list(
+    ui: &mut egui::Ui,
+    files: &[RecordingFile],
+    on_play: &mut dyn FnMut(&Path),
+    on_retry: &mut dyn FnMut(&Path),
+    on_delete: &mut dyn FnMut(&Path),
+) {
+    if files.is_empty() {
+        ui.label("沒有符合條件的錄音檔");
+        return;
+    }
+
+    let total_size = files.iter().map(|file| file.size_bytes).sum::<u64>();
+    ui.label(format!("共 {} 筆，{}", files.len(), gui::format_bytes(total_size)));
+
+    egui::ScrollArea::vertical().show(ui, |ui| {
+        for file in files {
+            ui.group(|ui| {
+                ui.horizontal(|ui| {
+                    ui.label(file.modified.format("%Y-%m-%d %H:%M:%S").to_string());
+                    ui.monospace(&file.file_name);
+                    ui.label(gui::format_bytes(file.size_bytes));
+                });
+                ui.horizontal(|ui| {
+                    if ui.button("播放").clicked() {
+                        on_play(&file.path);
+                    }
+                    if ui.button("重新轉錄").clicked() {
+                        on_retry(&file.path);
+                    }
+                    if ui.button("刪除").clicked() {
+                        on_delete(&file.path);
+                    }
+                });
+            });
+        }
+    });
+}

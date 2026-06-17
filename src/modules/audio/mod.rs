@@ -2,6 +2,8 @@ use crate::modules::error::log_error;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::{Arc, Mutex};
 
+pub mod vad;
+
 #[derive(Clone, Debug)]
 pub struct RecordedAudio {
     pub samples: Vec<f32>,
@@ -167,8 +169,14 @@ impl Recorder {
                 err.into_inner()
             }
         };
-        let data = buf.clone();
+        let mut data = buf.clone();
         buf.clear();
+        drop(buf);
+
+        normalize_audio(&mut data);
+        let mut vad = vad::EnergyVad::default();
+        vad.trim_silence(&mut data);
+
         RecordedAudio {
             samples: data,
             sample_rate: self.sample_rate,
@@ -323,5 +331,25 @@ fn update_level(level: &Arc<Mutex<f32>>, samples: impl Iterator<Item = f32>) {
 
     if let Ok(mut current) = level.lock() {
         *current = (*current * 0.65).max(peak);
+    }
+}
+
+fn normalize_audio(samples: &mut [f32]) {
+    if samples.is_empty() {
+        return;
+    }
+
+    let rms = (samples.iter().map(|s| s * s).sum::<f32>() / samples.len() as f32).sqrt();
+    if rms < 0.001 {
+        return;
+    }
+
+    let target_rms = 0.25;
+    let gain = (target_rms / rms).min(4.0).max(0.25);
+
+    if (gain - 1.0).abs() > 0.05 {
+        for sample in samples.iter_mut() {
+            *sample = (*sample * gain).clamp(-1.0, 1.0);
+        }
     }
 }
