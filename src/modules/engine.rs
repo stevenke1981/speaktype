@@ -33,6 +33,7 @@ pub enum ModelEvent {
     Progress(ModelDownloadProgress),
     Ready,
     Cancelled,
+    Warning(String),
     Failed(String),
 }
 
@@ -381,21 +382,27 @@ pub fn prepare_model_with_progress(
     model_path: &Path,
     use_cuda: bool,
     cancel: Arc<AtomicBool>,
-    mut on_event: impl FnMut(ModelEvent),
+    on_event: impl FnMut(ModelEvent),
 ) {
+    let on_event = std::cell::RefCell::new(on_event);
+    let emit = |event| {
+        on_event.borrow_mut()(event);
+    };
     match ensure_model_file(model_path, cancel, |progress| {
-        on_event(ModelEvent::Progress(progress));
+        emit(ModelEvent::Progress(progress));
+    }, |warning| {
+        emit(ModelEvent::Warning(warning));
     })
     .and_then(|_| {
         Transcriber::new(model_path, use_cuda)
             .map(|_| ())
             .map_err(|err| format!("模型載入失敗: {}", err))
     }) {
-        Ok(()) => on_event(ModelEvent::Ready),
-        Err(err) if err == "cancelled" => on_event(ModelEvent::Cancelled),
+        Ok(()) => emit(ModelEvent::Ready),
+        Err(err) if err == "cancelled" => emit(ModelEvent::Cancelled),
         Err(err) => {
             log_error("model prepare", &err);
-            on_event(ModelEvent::Failed(err));
+            emit(ModelEvent::Failed(err));
         }
     }
 }
@@ -408,6 +415,8 @@ fn load_worker_model(
 ) -> Result<Transcriber, String> {
     ensure_model_file(model_path, cancel, |progress| {
         let _ = event_tx.send(WorkerEvent::Model(ModelEvent::Progress(progress)));
+    }, |warning| {
+        let _ = event_tx.send(WorkerEvent::Model(ModelEvent::Warning(warning)));
     })?;
 
     Transcriber::new(model_path, use_cuda).map_err(|err| format!("模型載入失敗: {}", err))
@@ -592,6 +601,7 @@ fn ensure_model_file(
     model_path: &Path,
     cancel: Arc<AtomicBool>,
     mut on_progress: impl FnMut(ModelDownloadProgress),
+    mut on_warning: impl FnMut(String),
 ) -> Result<(), String> {
     if model_path.exists() {
         return Ok(());
@@ -690,9 +700,8 @@ fn ensure_model_file(
         let actual = models::sha256_file(&model_path.to_path_buf())
             .map_err(|err| format!("模型 SHA256 計算失敗: {}", err))?;
         if !actual.eq_ignore_ascii_case(&expected) {
-            let _ = fs::remove_file(model_path);
-            return Err(format!(
-                "模型 SHA256 校驗失敗: expected {expected}, actual {actual}"
+            on_warning(format!(
+                "模型 SHA256 校驗不一致: expected={expected}, actual={actual}"
             ));
         }
     }

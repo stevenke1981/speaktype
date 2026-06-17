@@ -14,6 +14,7 @@ use speaktype::modules::history::HistoryManager;
 use speaktype::modules::input::{GlobalHotkey, HotkeyCombo, HotkeyEvent};
 use speaktype::modules::models::{self, MODEL_CATALOG};
 use speaktype::modules::paths;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use speaktype::modules::recordings;
 use speaktype::modules::scenario::{Scenario, ScenarioManager};
@@ -63,6 +64,9 @@ pub struct SpeakTypeApp {
     engine: SpeakTypeEngine,
     hotkey: GlobalHotkey,
     device_status: DeviceStatus,
+    model_sha256_errors: HashMap<String, String>,
+    pending_download_confirm: Option<String>,
+    model_download_name: Option<String>,
 }
 
 impl SpeakTypeApp {
@@ -128,6 +132,9 @@ impl SpeakTypeApp {
             engine,
             hotkey: GlobalHotkey::new("Ctrl+Shift+L"),
             device_status,
+            model_sha256_errors: HashMap::new(),
+            pending_download_confirm: None,
+            model_download_name: None,
         };
         let record_toggle = app.config.hotkeys.record_toggle.clone();
         if let Err(err) = app.hotkey.update_hotkey(&record_toggle) {
@@ -255,6 +262,8 @@ impl SpeakTypeApp {
 
     fn select_model(&mut self, model_name: &str, force_download: bool) {
         self.config.model_name = Some(model_name.to_string());
+        self.model_download_name = Some(model_name.to_string());
+        self.model_sha256_errors.remove(model_name);
         if let Err(err) = self.config.save() {
             self.record_error(format!("儲存模型設定失敗: {}", err));
         }
@@ -451,13 +460,24 @@ impl SpeakTypeApp {
                 self.engine.mark_model_ready();
                 self.model_status_message = "模型已常駐準備完成".to_string();
                 self.model_download = None;
+                if let Some(dl_name) = &self.model_download_name {
+                    self.model_sha256_errors.remove(dl_name);
+                }
+                self.model_download_name = None;
                 should_clear = true;
             }
             ModelEvent::Cancelled => {
                 self.engine.mark_model_failed("模型下載已取消".to_string());
                 self.model_status_message = "模型下載已取消".to_string();
                 self.model_download = None;
+                self.model_download_name = None;
                 should_clear = true;
+            }
+            ModelEvent::Warning(warn) => {
+                // Non-fatal warnings (e.g. SHA256 mismatch — file kept)
+                if let Some(dl_name) = &self.model_download_name {
+                    self.model_sha256_errors.insert(dl_name.clone(), warn);
+                }
             }
             ModelEvent::Failed(err) => {
                 self.engine.mark_model_failed(err.clone());
@@ -765,6 +785,7 @@ impl eframe::App for SpeakTypeApp {
         self.draw_error_window(ctx);
         self.draw_recordings_window(ctx);
         self.draw_model_download_window(ctx);
+        self.draw_download_confirm_dialog(ctx);
     }
 }
 
@@ -1215,6 +1236,10 @@ impl SpeakTypeApp {
         let mut open = self.show_model_manager_window;
         let mut selected_model: Option<(&'static str, bool)> = None;
 
+        if !open {
+            self.pending_download_confirm = None;
+        }
+
         egui::Window::new("模型管理中心")
             .open(&mut open)
             .resizable(true)
@@ -1251,6 +1276,17 @@ impl SpeakTypeApp {
                             }
                         }
 
+                        // SHA256 verification status (selectable for copy)
+                        if let Some(sha256_err) = self.model_sha256_errors.get(entry.name) {
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(format!("⚠ SHA256 校驗不一致：{}", sha256_err))
+                                        .color(egui::Color32::RED),
+                                )
+                                .selectable(true),
+                            );
+                        }
+
                         ui.horizontal(|ui| {
                             if ui.button("使用此模型").clicked() {
                                 selected_model = Some((entry.name, false));
@@ -1259,7 +1295,7 @@ impl SpeakTypeApp {
                                 .button(if installed { "重新下載" } else { "下載" })
                                 .clicked()
                             {
-                                selected_model = Some((entry.name, true));
+                                self.pending_download_confirm = Some(entry.name.to_string());
                             }
                         });
                     });
@@ -1385,6 +1421,64 @@ impl SpeakTypeApp {
                     ui.spinner();
                 }
             });
+    }
+
+    fn draw_download_confirm_dialog(&mut self, ctx: &egui::Context) {
+        if self.pending_download_confirm.is_none() {
+            return;
+        }
+        // If parent model manager window is closed, dismiss the dialog
+        if !self.show_model_manager_window {
+            self.pending_download_confirm = None;
+            return;
+        }
+
+        let model_name = self.pending_download_confirm.as_ref().unwrap().clone();
+        let entry = MODEL_CATALOG.iter().find(|e| e.name == model_name);
+        let model_label = entry.map(|e| e.label).unwrap_or(&model_name);
+
+        // Use .open() with a local flag so the X button works
+        let mut dialog_open = true;
+        egui::Window::new("確認下載")
+            .open(&mut dialog_open)
+            .resizable(false)
+            .default_width(420.0)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label(format!(
+                    "確定要下載模型「{}」嗎？",
+                    model_label
+                ));
+                ui.add_space(4.0);
+                if let Some(e) = entry {
+                    ui.label(format!("檔名：{}", e.file_name));
+                    ui.label(format!("大小：{}", e.approx_size));
+                }
+                ui.add_space(8.0);
+                let models_dir = self.config.get_models_dir();
+                ui.label(format!("下載位置：{}", models_dir));
+                ui.add_space(4.0);
+                ui.colored_label(
+                    egui::Color32::YELLOW,
+                    "下載過程中請勿關閉應用程式。大型模型可能需要數分鐘。",
+                );
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    if ui.button("取消").clicked() {
+                        self.pending_download_confirm = None;
+                    }
+                    if ui.button("確定下載").clicked() {
+                        if let Some(name) = self.pending_download_confirm.take() {
+                            self.select_model(&name, true);
+                        }
+                    }
+                });
+            });
+
+        // User closed via X button → clear pending download
+        if !dialog_open {
+            self.pending_download_confirm = None;
+        }
     }
 }
 
