@@ -1,8 +1,10 @@
 // gui/mod.rs - egui 介面模組
-// 職責：主視窗 UI、系統匣、狀態顯示
+// 職責：主視窗 UI、系統匣、狀態顯示、字型設定
 
 use crate::modules::scenario::Scenario;
 use eframe::egui;
+use std::fs;
+use std::path::Path;
 
 pub struct GuiManager {
     pub show_history: bool,
@@ -74,5 +76,58 @@ impl GuiManager {
 impl Default for GuiManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+pub fn configure_cjk_fonts(ctx: &egui::Context) {
+    let font_candidates = [
+        r"C:\Windows\Fonts\NotoSansTC-VF.ttf",
+        r"C:\Windows\Fonts\msjh.ttc",
+        r"C:\Windows\Fonts\mingliu.ttc",
+        r"C:\Windows\Fonts\simhei.ttf",
+        r"C:\Windows\Fonts\simsun.ttc",
+    ];
+
+    let Some((font_name, font_bytes)) = font_candidates
+        .iter()
+        .find_map(|path| load_font_bytes(path).map(|bytes| (path.to_string(), bytes)))
+    else {
+        return;
+    };
+
+    let mut fonts = egui::FontDefinitions::default();
+    fonts
+        .font_data
+        .insert(font_name.clone(), egui::FontData::from_owned(font_bytes));
+
+    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+        fonts
+            .families
+            .entry(family)
+            .or_default()
+            .insert(0, font_name.clone());
+    }
+
+    ctx.set_fonts(fonts);
+}
+
+fn load_font_bytes(path: &str) -> Option<Vec<u8>> {
+    fs::read(Path::new(path)).ok()
+}
+
+pub fn format_bytes(bytes: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = 1024.0 * 1024.0;
+    const GB: f64 = 1024.0 * 1024.0 * 1024.0;
+
+    let bytes = bytes as f64;
+    if bytes >= GB {
+        format!("{:.2} GB", bytes / GB)
+    } else if bytes >= MB {
+        format!("{:.1} MB", bytes / MB)
+    } else if bytes >= KB {
+        format!("{:.1} KB", bytes / KB)
+    } else {
+        format!("{} B", bytes as u64)
     }
 }
