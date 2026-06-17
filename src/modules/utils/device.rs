@@ -53,8 +53,14 @@ fn detect_gpu(use_cuda: bool) -> String {
     }
 }
 
+#[cfg(windows)]
 fn query_video_controller_name() -> Option<String> {
     query_video_controller_with_wmic().or_else(query_video_controller_with_powershell)
+}
+
+#[cfg(not(windows))]
+fn query_video_controller_name() -> Option<String> {
+    None
 }
 
 fn query_video_controller_with_wmic() -> Option<String> {

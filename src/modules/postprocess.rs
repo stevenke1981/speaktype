@@ -38,10 +38,13 @@ fn protect_vocabulary_terms(
     let mut result = text.to_string();
     let mut terms = Vec::new();
 
-    for entry in entries
+    let mut sorted: Vec<&VocabularyEntry> = entries
         .iter()
         .filter(|entry| entry.protect && !entry.is_blank())
-    {
+        .collect();
+    sorted.sort_by_key(|entry| std::cmp::Reverse(entry.source.len()));
+
+    for entry in sorted {
         let source = entry.source.trim();
         if source.is_empty() {
             continue;
@@ -72,7 +75,10 @@ fn restore_vocabulary_terms(mut text: String, terms: &[ProtectedTerm]) -> String
 }
 
 fn apply_vocabulary_replacements(mut text: String, entries: &[VocabularyEntry]) -> String {
-    for entry in entries.iter().filter(|entry| !entry.is_blank()) {
+    let mut sorted: Vec<&VocabularyEntry> = entries.iter().filter(|entry| !entry.is_blank()).collect();
+    sorted.sort_by_key(|entry| std::cmp::Reverse(entry.source.len()));
+
+    for entry in sorted {
         let source = entry.source.trim();
         if source.is_empty() {
             continue;
