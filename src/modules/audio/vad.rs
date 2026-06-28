@@ -1,5 +1,3 @@
-use std::f32::consts::SQRT_2;
-
 const DEFAULT_FRAME_MS: u32 = 30;
 const TARGET_SAMPLE_RATE: u32 = 16_000;
 

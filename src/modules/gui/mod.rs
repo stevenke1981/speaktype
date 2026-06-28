@@ -1,13 +1,16 @@
 // gui/mod.rs - egui 介面模組
 // 職責：主視窗 UI、系統匣、狀態顯示、字型設定
 
+pub mod theme;
 pub mod views;
 
 use crate::modules::config::{OutputRulesConfig, ScenarioOutputRules, VocabularyEntry};
 use crate::modules::scenario::Scenario;
 use eframe::egui;
+use eframe::egui::{Color32, Rounding, Stroke, Vec2};
 use std::fs;
 use std::path::Path;
+use theme::*;
 
 pub struct GuiManager {
     pub show_history: bool,
@@ -20,47 +23,63 @@ impl GuiManager {
         }
     }
 
-    /// 繪製裝置狀態
+    /// 繪製裝置狀態（卡片式設計）
     pub fn draw_device_status(&self, ui: &mut egui::Ui, microphone: &str, gpu: &str, model: &str) {
-        ui.label("裝置狀態");
-        ui.add_space(6.0);
+        card_frame(ui).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new("裝置狀態")
+                        .size(14.0)
+                        .color(text_primary()),
+                );
+            });
+            ui.add_space(SPACE_SM);
 
-        self.draw_status_row(ui, microphone, "麥克風");
-        self.draw_status_row(ui, gpu, "GPU");
-        self.draw_status_row(ui, model, "模型");
+            self.draw_status_row(ui, microphone, "麥克風");
+            self.draw_status_row(ui, gpu, "GPU");
+            self.draw_status_row(ui, model, "模型");
+        });
     }
 
     fn draw_status_row(&self, ui: &mut egui::Ui, text: &str, label: &str) {
         ui.horizontal(|ui| {
-            let color =
-                if text.contains("就緒") || text.contains("已載入") || text.contains("已準備")
-                {
-                    egui::Color32::from_rgb(0, 200, 100)
-                } else if text.contains("未找到") {
-                    egui::Color32::from_rgb(255, 180, 0)
-                } else {
-                    egui::Color32::RED
-                };
-            ui.colored_label(color, "●");
-            ui.label(format!("{}：{}", label, text));
+            ui.add_space(SPACE_XS);
+            let (color, dot) = status_dot(ui, text);
+            ui.colored_label(color, dot);
+            ui.label(
+                egui::RichText::new(format!("{}：{}", label, text))
+                    .color(text_primary()),
+            );
         });
     }
 
-    /// 繪製情境切換器
+    /// 繪製情境切換器（分段按鈕風格）
     pub fn draw_scenario_selector(
         &self,
         ui: &mut egui::Ui,
         current: Scenario,
         on_select: &mut dyn FnMut(Scenario),
     ) {
-        ui.label("情境：");
-        ui.horizontal(|ui| {
-            for scenario in Scenario::all() {
-                let selected = current == scenario;
-                if ui.selectable_label(selected, scenario.name()).clicked() {
-                    on_select(scenario);
+        section_frame(ui).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new("情境")
+                        .size(12.0)
+                        .color(text_secondary()),
+                );
+                ui.add_space(SPACE_SM);
+                for scenario in Scenario::all() {
+                    let selected = current == scenario;
+                    let text = egui::RichText::new(scenario.name())
+                        .color(if selected { accent_color() } else { text_secondary() });
+                    if ui
+                        .selectable_label(selected, text)
+                        .clicked()
+                    {
+                        on_select(scenario);
+                    }
                 }
-            }
+            });
         });
     }
 
@@ -168,45 +187,63 @@ pub fn draw_vocabulary_settings(ui: &mut egui::Ui, entries: &mut Vec<VocabularyE
     let mut changed = false;
     let mut remove_index = None;
 
-    ui.label("自訂詞庫 / 專有名詞");
-    ui.label("source 是辨識可能出現的文字，replacement 是要輸出的正式寫法。");
+    section_frame(ui).show(ui, |ui| {
+        ui.label(
+            egui::RichText::new("自訂詞庫 / 專有名詞")
+                .size(13.0)
+                .color(text_primary()),
+        );
+        ui.label(
+            egui::RichText::new("source 是辨識可能出現的文字，replacement 是要輸出的正式寫法。")
+                .size(11.0)
+                .color(text_secondary()),
+        );
+        ui.add_space(SPACE_SM);
 
-    egui::Grid::new("vocabulary_grid")
-        .num_columns(4)
-        .spacing([8.0, 6.0])
-        .striped(true)
-        .show(ui, |ui| {
-            ui.label("source");
-            ui.label("replacement");
-            ui.label("保護");
-            ui.label("");
-            ui.end_row();
-
-            for (index, entry) in entries.iter_mut().enumerate() {
-                changed |= ui.text_edit_singleline(&mut entry.source).changed();
-                changed |= ui.text_edit_singleline(&mut entry.replacement).changed();
-                changed |= ui.checkbox(&mut entry.protect, "").changed();
-                if ui.button("刪除").clicked() {
-                    remove_index = Some(index);
-                }
+        egui::Grid::new("vocabulary_grid")
+            .num_columns(4)
+            .spacing([SPACE_SM, SPACE_SM])
+            .striped(true)
+            .show(ui, |ui| {
+                ui.label(
+                    egui::RichText::new("source").color(text_secondary()),
+                );
+                ui.label(
+                    egui::RichText::new("replacement").color(text_secondary()),
+                );
+                ui.label(
+                    egui::RichText::new("保護").color(text_secondary()),
+                );
+                ui.label("");
                 ui.end_row();
+
+                for (index, entry) in entries.iter_mut().enumerate() {
+                    changed |= ui.text_edit_singleline(&mut entry.source).changed();
+                    changed |= ui.text_edit_singleline(&mut entry.replacement).changed();
+                    changed |= ui.checkbox(&mut entry.protect, "").changed();
+                    if ui.button("刪除").clicked() {
+                        remove_index = Some(index);
+                    }
+                    ui.end_row();
+                }
+            });
+
+        if let Some(index) = remove_index {
+            entries.remove(index);
+            changed = true;
+        }
+
+        ui.add_space(SPACE_SM);
+        ui.horizontal(|ui| {
+            if ui.button("＋ 新增詞彙").clicked() {
+                entries.push(VocabularyEntry::blank());
+                changed = true;
+            }
+            if ui.button("清除空白列").clicked() {
+                entries.retain(|entry| !entry.is_blank());
+                changed = true;
             }
         });
-
-    if let Some(index) = remove_index {
-        entries.remove(index);
-        changed = true;
-    }
-
-    ui.horizontal(|ui| {
-        if ui.button("新增詞彙").clicked() {
-            entries.push(VocabularyEntry::blank());
-            changed = true;
-        }
-        if ui.button("清除空白列").clicked() {
-            entries.retain(|entry| !entry.is_blank());
-            changed = true;
-        }
     });
 
     if entries.is_empty() {
@@ -228,74 +265,77 @@ pub fn draw_recording_overlay(
     }
 
     let area_id = egui::Id::new("recording_pill_overlay");
-    let width = 280.0;
-    let height = 60.0;
+    let width = 320.0;
+    let height = 52.0;
     let screen_size = ctx.screen_rect().size();
-    let pos = egui::pos2((screen_size.x - width) / 2.0, 0.0);
+    let pos = egui::pos2((screen_size.x - width) / 2.0, 6.0);
 
     egui::Area::new(area_id)
         .fixed_pos(pos)
         .movable(false)
         .show(ctx, |ui| {
             let frame = egui::Frame::none()
-                .fill(egui::Color32::from_rgba_premultiplied(0, 0, 0, 200))
-                .rounding(egui::Rounding::same(12.0))
+                .fill(Color32::from_rgba_premultiplied(0, 0, 0, 200))
+                .rounding(Rounding::same(RADIUS_XL))
+                .stroke(Stroke::new(1.0, Color32::from_rgba_premultiplied(74, 108, 247, 80)))
                 .shadow(egui::epaint::Shadow {
-                    offset: egui::vec2(0.0, 4.0),
-                    blur: 16.0,
+                    offset: Vec2::new(0.0, 8.0),
+                    blur: 24.0,
                     spread: 0.0,
-                    color: egui::Color32::from_black_alpha(60),
+                    color: Color32::from_black_alpha(80),
                 });
             frame.show(ui, |ui| {
-                ui.set_min_size(egui::vec2(width, height));
-                ui.horizontal(|ui| {
-                    ui.add_space(12.0);
+                ui.set_min_size(Vec2::new(width, height));
+                ui.horizontal_centered(|ui| {
+                    ui.add_space(SPACE_MD);
 
-                    let dot_color = egui::Color32::from_rgb(255, 60, 60);
+                    // 脈動錄音紅點
                     let pulse = ((elapsed_secs * 6.0).sin() * 0.3 + 0.7) as u8;
                     ui.add(
                         egui::Button::new(
                             egui::RichText::new("●")
-                                .size(20.0)
-                                .color(egui::Color32::from_rgba_premultiplied(255, 60, 60, pulse)),
+                                .size(18.0)
+                                .color(Color32::from_rgba_premultiplied(255, 60, 60, pulse)),
                         )
-                        .fill(egui::Color32::TRANSPARENT)
+                        .fill(Color32::TRANSPARENT)
                         .frame(false),
                     );
 
-                    ui.add_space(8.0);
+                    ui.add_space(SPACE_SM);
 
-                    ui.vertical(|ui| {
-                        ui.add_space(4.0);
+                    // 時間和標籤
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(SPACE_XS);
                         ui.label(
                             egui::RichText::new("錄音中")
-                                .size(14.0)
-                                .color(egui::Color32::WHITE),
+                                .size(13.0)
+                                .color(text_primary()),
                         );
                         ui.label(
                             egui::RichText::new(format!("{:.1}s", elapsed_secs))
-                                .size(11.0)
-                                .color(egui::Color32::GRAY),
+                                .size(10.0)
+                                .color(text_secondary()),
                         );
                     });
 
-                    ui.add_space(8.0);
+                    ui.add_space(SPACE_SM);
 
-                    let bar_width = 100.0;
-                    let bar_height = 6.0;
+                    // 音量條
+                    let bar_width = 96.0;
+                    let bar_height = 4.0;
                     let level = input_level.clamp(0.0, 1.0);
-                    let (r, g, b) = if level < 0.5 {
-                        (60, 200, 60)
+                    let bar_color = if level < 0.5 {
+                        success_color()
                     } else if level < 0.8 {
-                        (220, 200, 40)
+                        warning_color()
                     } else {
-                        (255, 80, 60)
+                        error_color()
                     };
                     ui.add(
                         egui::ProgressBar::new(level)
                             .desired_width(bar_width)
                             .desired_height(bar_height)
-                            .fill(egui::Color32::from_rgb(r, g, b))
+                            .fill(bar_color)
                             .text(""),
                     );
 
@@ -304,18 +344,19 @@ pub fn draw_recording_overlay(
                             .add(
                                 egui::Button::new(
                                     egui::RichText::new("■")
-                                        .size(16.0)
-                                        .color(egui::Color32::WHITE),
+                                        .size(14.0)
+                                        .color(Color32::WHITE),
                                 )
-                                .fill(egui::Color32::from_rgb(200, 50, 50))
-                                .rounding(egui::Rounding::same(6.0))
-                                .min_size(egui::vec2(36.0, 28.0)),
+                                .fill(error_color())
+                                .rounding(Rounding::same(RADIUS_SM))
+                                .min_size(Vec2::new(32.0, 24.0)),
                             )
                             .clicked()
                         {
                             on_stop();
                         }
                     });
+                    ui.add_space(SPACE_SM);
                 });
             });
         });
@@ -324,15 +365,32 @@ pub fn draw_recording_overlay(
 pub fn draw_output_rules_settings(ui: &mut egui::Ui, rules: &mut OutputRulesConfig) -> bool {
     let mut changed = false;
 
-    ui.label("輸出規則模板");
-    ui.collapsing("聊天", |ui| {
-        changed |= draw_rule_template(ui, &mut rules.chat);
-    });
-    ui.collapsing("寫作", |ui| {
-        changed |= draw_rule_template(ui, &mut rules.writing);
-    });
-    ui.collapsing("程式碼", |ui| {
-        changed |= draw_rule_template(ui, &mut rules.code);
+    section_frame(ui).show(ui, |ui| {
+        ui.label(
+            egui::RichText::new("輸出規則模板")
+                .size(13.0)
+                .color(text_primary()),
+        );
+        ui.add_space(SPACE_SM);
+
+        ui.collapsing(
+            egui::RichText::new("聊天").color(text_primary()),
+            |ui| {
+                changed |= draw_rule_template(ui, &mut rules.chat);
+            },
+        );
+        ui.collapsing(
+            egui::RichText::new("寫作").color(text_primary()),
+            |ui| {
+                changed |= draw_rule_template(ui, &mut rules.writing);
+            },
+        );
+        ui.collapsing(
+            egui::RichText::new("程式碼").color(text_primary()),
+            |ui| {
+                changed |= draw_rule_template(ui, &mut rules.code);
+            },
+        );
     });
 
     changed

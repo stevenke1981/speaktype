@@ -55,6 +55,24 @@ pub fn model_path_for_name(model_name: &str) -> PathBuf {
     paths::models_dir().join(catalog_entry(model_name).file_name)
 }
 
+/// Remove stale `.bin.part` temporary download files from the models directory.
+/// These are left behind when a model download is interrupted.
+pub fn cleanup_stale_temp_files() {
+    if let Ok(dir) = std::fs::read_dir(paths::models_dir()) {
+        for entry in dir.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) == Some("part")
+                && path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .map_or(false, |stem| stem.ends_with(".bin"))
+            {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
+}
+
 pub fn sha256_file(path: &PathBuf) -> IoResult<String> {
     let mut file = File::open(path)?;
     let mut hasher = Sha256::new();

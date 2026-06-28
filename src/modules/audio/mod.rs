@@ -1,5 +1,6 @@
 use crate::modules::error::log_error;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 
 pub mod vad;
@@ -169,8 +170,8 @@ impl Recorder {
                 err.into_inner()
             }
         };
-        let mut data = buf.clone();
-        buf.clear();
+        // Take the Vec contents through the MutexGuard (avoids clone+clear)
+        let mut data = std::mem::take(buf.deref_mut());
         drop(buf);
 
         normalize_audio(&mut data);

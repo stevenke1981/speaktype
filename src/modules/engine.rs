@@ -268,9 +268,14 @@ impl SpeakTypeEngine {
         self.model_error = Some(error);
     }
 
-    pub fn toggle_recording(&mut self) -> Result<Option<TranscriptionRequest>, String> {
+    pub fn toggle_recording(
+        &mut self,
+        output: &OutputConfig,
+        scenario: Scenario,
+        mode: TranscriptionMode,
+    ) -> Result<Option<TranscriptionRequest>, String> {
         if self.recording {
-            self.stop_recording_capture().map(Some)
+            self.stop_recording_capture(output, scenario, mode).map(Some)
         } else {
             self.start_recording()?;
             Ok(None)
@@ -290,7 +295,12 @@ impl SpeakTypeEngine {
         Ok(())
     }
 
-    pub fn stop_recording_capture(&mut self) -> Result<TranscriptionRequest, String> {
+    pub fn stop_recording_capture(
+        &mut self,
+        output: &OutputConfig,
+        scenario: Scenario,
+        mode: TranscriptionMode,
+    ) -> Result<TranscriptionRequest, String> {
         if !self.recording {
             return Err("目前沒有正在錄音".to_string());
         }
@@ -319,11 +329,11 @@ impl SpeakTypeEngine {
 
         Ok(TranscriptionRequest {
             audio,
-            output: OutputConfig::default(),
+            output: output.clone(),
             model_path: self.model_path.clone(),
             use_cuda: self.use_cuda,
-            scenario: Scenario::Chat,
-            mode: TranscriptionMode::Stable,
+            scenario,
+            mode,
             duration_sec: duration,
         })
     }
@@ -608,7 +618,12 @@ fn save_recording_wav(audio: &RecordedAudio) -> Result<PathBuf, String> {
 
 fn normalize_transcription_text(text: &str) -> String {
     text.chars()
-        .filter(|ch| *ch != '\0' && *ch != '\u{feff}' && *ch != '\u{fffd}')
+        .filter(|ch| {
+            !ch.is_control()
+                && *ch != '\0'
+                && *ch != '\u{feff}'
+                && *ch != '\u{fffd}'
+        })
         .collect::<String>()
         .trim()
         .to_string()

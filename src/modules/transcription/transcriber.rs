@@ -31,6 +31,8 @@ impl Transcriber {
         params.set_print_special(false);
         params.set_print_realtime(false);
         params.set_print_timestamps(false);
+        // 使用 whisper 內建 VAD：跳過無語音片段
+        params.set_no_speech_thold(0.6);
 
         state
             .full(params, audio_samples)

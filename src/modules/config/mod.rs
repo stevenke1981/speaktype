@@ -559,7 +559,7 @@ mod tests {
         assert_eq!(config.recording.max_total_mb, 4096);
         assert_eq!(config.output.auto_inject_focused_window, true);
         assert_eq!(config.output.chinese_conversion, ChineseConversionMode::Disabled);
-        assert_eq!(config.output.buffer_mode, OutputBufferMode::Clipboard);
+        assert_eq!(config.output.buffer_mode, OutputBufferMode::Temporary);
     }
 
     #[test]

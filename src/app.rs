@@ -9,10 +9,10 @@ use speaktype::modules::engine::{
     TranscriptionEvent, TranscriptionRequest, TranscriptionResult, WorkerEvent,
 };
 use speaktype::modules::error::{log_error, log_file_path};
-use speaktype::modules::gui::{self, GuiManager};
+use speaktype::modules::gui::{self, theme, GuiManager};
 use speaktype::modules::history::HistoryManager;
 use speaktype::modules::input::{GlobalHotkey, HotkeyCombo, HotkeyEvent};
-use speaktype::modules::models::{self, MODEL_CATALOG};
+use speaktype::modules::models::{self, cleanup_stale_temp_files, MODEL_CATALOG};
 use speaktype::modules::paths;
 use speaktype::modules::recordings;
 use speaktype::modules::scenario::{Scenario, ScenarioManager};
@@ -72,6 +72,7 @@ pub struct SpeakTypeApp {
 impl SpeakTypeApp {
     pub fn new(ctx: &egui::Context, start_hidden_to_tray: bool) -> Self {
         gui::configure_cjk_fonts(ctx);
+        theme::init_theme(ctx, theme::SpeakTypeTheme::QuietLuxury);
 
         let config = AppConfig::load();
         let current_scenario = config
@@ -83,6 +84,7 @@ impl SpeakTypeApp {
             config.recording.retention_days,
             config.recording.max_total_mb,
         );
+        cleanup_stale_temp_files();
 
         let model_path = config.get_model_path();
         let engine = SpeakTypeEngine::new(model_path, config.use_cuda);
@@ -159,7 +161,11 @@ impl SpeakTypeApp {
             return;
         }
 
-        match self.engine.toggle_recording() {
+        match self.engine.toggle_recording(
+            &self.config.output,
+            self.scenario_manager.current(),
+            self.config.recording.transcription_mode,
+        ) {
             Ok(Some(request)) => self.start_transcription_job(request),
             Ok(None) => {
                 self.last_error = None;
@@ -194,7 +200,11 @@ impl SpeakTypeApp {
     }
 
     fn finish_ptt_recording(&mut self) {
-        match self.engine.stop_recording_capture() {
+        match self.engine.stop_recording_capture(
+            &self.config.output,
+            self.scenario_manager.current(),
+            self.config.recording.transcription_mode,
+        ) {
             Ok(request) => self.start_transcription_job(request),
             Err(e) => {
                 self.record_error(e);
@@ -520,6 +530,18 @@ impl SpeakTypeApp {
             return;
         }
 
+        // Check for Escape to cancel capture
+        let escape_pressed = ctx.input(|input| {
+            input
+                .events
+                .iter()
+                .any(|event| matches!(event, egui::Event::Key { key: egui::Key::Escape, pressed: true, .. }))
+        });
+        if escape_pressed {
+            self.hotkey_capture = false;
+            return;
+        }
+
         let captured = ctx.input(|input| {
             input.events.iter().find_map(|event| {
                 if let egui::Event::Key {
@@ -624,156 +646,275 @@ impl eframe::App for SpeakTypeApp {
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("SpeakType");
-            ui.add_space(8.0);
-
+            // ========== 標題列 ==========
             ui.horizontal(|ui| {
-                if ui.button("紀錄視窗").clicked() {
-                    self.show_history_window = true;
-                }
-                if ui.button("錄音檔").clicked() {
-                    self.show_recordings_window = true;
-                }
-                if ui.button("模型中心").clicked() {
-                    self.show_model_manager_window = true;
-                }
-                if ui.button("設定").clicked() {
-                    self.show_settings_window = true;
-                }
-                if ui.button("錯誤紀錄").clicked() {
-                    self.show_error_window = true;
-                }
-                if ui.button("刷新狀態").clicked() {
-                    self.refresh_device_status();
-                }
-                if ui
-                    .add_enabled(self.tray.is_some(), egui::Button::new("最小化到 Tray"))
-                    .clicked()
-                {
-                    self.minimize_to_tray(ctx);
+                ui.heading(
+                    egui::RichText::new("SpeakType")
+                        .size(20.0)
+                        .color(theme::accent_color()),
+                );
+                if self.hidden_to_tray {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            egui::RichText::new("已隱藏到系統匣")
+                                .size(11.0)
+                                .color(theme::success_color()),
+                        );
+                    });
                 }
             });
+            ui.add_space(theme::SPACE_SM);
 
-            if self.hidden_to_tray {
-                ui.colored_label(
-                    egui::Color32::from_rgb(80, 180, 120),
-                    "主視窗已藏到系統匣，可從 tray 右鍵選單叫回。",
-                );
-            }
+            // ========== 工具列 ==========
+            theme::section_frame(ui).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    if ui.button("📋 紀錄")
+                        .on_hover_text("辨識歷史紀錄")
+                        .clicked()
+                    {
+                        self.show_history_window = true;
+                    }
+                    if ui.button("🎙 錄音檔")
+                        .on_hover_text("管理錄音檔案")
+                        .clicked()
+                    {
+                        self.show_recordings_window = true;
+                    }
+                    if ui.button("🧠 模型中心")
+                        .on_hover_text("切換模型")
+                        .clicked()
+                    {
+                        self.show_model_manager_window = true;
+                    }
+                    if ui.button("⚙ 設定")
+                        .on_hover_text("應用程式設定")
+                        .clicked()
+                    {
+                        // 重置 egui 視窗狀態，確保每次都能重新開啟
+                        if !self.show_settings_window {
+                            ctx.memory_mut(|mem| mem.reset_areas());
+                        }
+                        self.show_settings_window = true;
+                    }
+                    if ui.button("⚠ 錯誤")
+                        .on_hover_text("錯誤紀錄")
+                        .clicked()
+                    {
+                        self.show_error_window = true;
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .add_enabled(self.tray.is_some(), egui::Button::new("⊟ 隱藏"))
+                            .on_hover_text("最小化到系統匣")
+                            .clicked()
+                        {
+                            self.minimize_to_tray(ctx);
+                        }
+                        if ui.button("↻")
+                            .on_hover_text("重新整理裝置狀態")
+                            .clicked()
+                        {
+                            self.refresh_device_status();
+                        }
+                    });
+                });
+            });
+            ui.add_space(theme::SPACE_SM);
 
-            ui.add_space(8.0);
-
+            // ========== 裝置狀態 ==========
             self.gui.draw_device_status(
                 ui,
                 &self.device_status.microphone,
                 &self.device_status.gpu,
                 &self.device_status.model,
             );
+            ui.add_space(theme::SPACE_SM);
 
-            ui.separator();
+            // ========== 控制區 ==========
+            theme::card_frame(ui).show(ui, |ui| {
+                // 情境選擇
+                let mut selected_scenario = self.scenario_manager.current();
+                self.gui
+                    .draw_scenario_selector(ui, self.scenario_manager.current(), &mut |scenario| {
+                        selected_scenario = scenario
+                    });
+                if selected_scenario != self.scenario_manager.current() {
+                    self.select_scenario(selected_scenario);
+                }
 
-            let mut selected_scenario = self.scenario_manager.current();
-            self.gui
-                .draw_scenario_selector(ui, self.scenario_manager.current(), &mut |scenario| {
-                    selected_scenario = scenario
+                ui.add_space(theme::SPACE_SM);
+
+                // 狀態列
+                ui.horizontal(|ui| {
+                    let (status_color, _) = theme::status_dot(ui, &self.transcription_status);
+                    ui.colored_label(status_color, "●");
+                    ui.label(
+                        egui::RichText::new(&self.transcription_status)
+                            .color(theme::text_primary()),
+                    );
                 });
-            if selected_scenario != self.scenario_manager.current() {
-                self.select_scenario(selected_scenario);
-            }
+                if !self.model_status_message.is_empty() {
+                    ui.horizontal(|ui| {
+                        ui.colored_label(theme::info_color(), "●");
+                        ui.label(
+                            egui::RichText::new(format!("模型：{}", self.model_status_message))
+                                .color(theme::text_secondary())
+                                .size(11.0),
+                        );
+                    });
+                }
 
-            ui.add_space(8.0);
-            ui.label(format!("狀態：{}", self.transcription_status));
-            if !self.model_status_message.is_empty() {
-                ui.label(format!("模型：{}", self.model_status_message));
-            }
-            let model_download_ref = self.model_download.as_ref();
-            let cancel_ref = self.model_cancel.clone();
-            let mut retry_pending = false;
-            gui::views::draw_model_download_status(
-                ui,
-                model_download_ref,
-                &mut || {
-                    if let Some(cancel) = &cancel_ref {
-                        cancel.store(true, Ordering::Relaxed);
+                // 模型下載進度
+                let model_download_ref = self.model_download.as_ref();
+                let cancel_ref = self.model_cancel.clone();
+                let mut retry_pending = false;
+                gui::views::draw_model_download_status(
+                    ui,
+                    model_download_ref,
+                    &mut || {
+                        if let Some(cancel) = &cancel_ref {
+                            cancel.store(true, Ordering::Relaxed);
+                        }
+                    },
+                    &mut || {
+                        retry_pending = true;
+                    },
+                );
+                if retry_pending {
+                    self.start_model_job();
+                }
+
+                ui.add_space(theme::SPACE_SM);
+
+                // 主要動作按鈕
+                let record_label = if self.recording {
+                    format!("⏹ 停止錄音 ({})", self.config.hotkeys.record_toggle)
+                } else {
+                    format!("⏺ 開始錄音 ({})", self.config.hotkeys.record_toggle)
+                };
+                if ui
+                    .add_enabled(
+                        !self.transcription_busy && self.model_cancel.is_none(),
+                        egui::Button::new(
+                            egui::RichText::new(record_label)
+                                .color(if self.recording { theme::error_color() } else { theme::accent_color() }),
+                        )
+                        .min_size(egui::vec2(ui.available_width(), 32.0))
+                        .fill(if self.recording {
+                            egui::Color32::from_rgba_premultiplied(239, 68, 68, 20)
+                        } else {
+                            egui::Color32::from_rgba_premultiplied(74, 108, 247, 12)
+                        }),
+                    )
+                    .clicked()
+                {
+                    self.toggle_recording_action();
+                }
+
+                ui.add_space(theme::SPACE_SM);
+
+                // 次要動作
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled(
+                            !self.transcription_busy && self.pending_retry.is_some(),
+                            egui::Button::new("重試上一段"),
+                        )
+                        .on_hover_text("重新轉錄上一次錄音")
+                        .clicked()
+                    {
+                        self.retry_last_transcription();
                     }
-                },
-                &mut || {
-                    retry_pending = true;
-                },
-            );
-            if retry_pending {
-                self.start_model_job();
-            }
-
-            ui.add_space(8.0);
-            if ui
-                .add_enabled(
-                    !self.transcription_busy && self.model_cancel.is_none(),
-                    egui::Button::new(if self.recording {
-                        format!("停止錄音 ({})", self.config.hotkeys.record_toggle)
-                    } else {
-                        format!("開始錄音 ({})", self.config.hotkeys.record_toggle)
-                    }),
-                )
-                .clicked()
-            {
-                self.toggle_recording_action();
-            }
-            ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(
-                        !self.transcription_busy && self.pending_retry.is_some(),
-                        egui::Button::new("重試上一段"),
-                    )
-                    .clicked()
-                {
-                    self.retry_last_transcription();
-                }
-                if ui
-                    .add_enabled(
-                        self.pending_preview.is_some(),
-                        egui::Button::new("送出到焦點視窗"),
-                    )
-                    .clicked()
-                {
-                    self.send_pending_preview();
-                }
+                    if ui
+                        .add_enabled(
+                            self.pending_preview.is_some(),
+                            egui::Button::new(
+                                egui::RichText::new("送出到焦點視窗").color(theme::accent_color()),
+                            ),
+                        )
+                        .on_hover_text("將文字注入當前焦點的應用程式視窗")
+                        .clicked()
+                    {
+                        self.send_pending_preview();
+                    }
+                });
             });
 
-            if self.recording {
-                ctx.request_repaint_after(Duration::from_millis(50));
-            }
-
-            if let Some(path) = self.engine.last_recording_path() {
-                ui.label(format!("最近錄音檔：{}", path.display()));
-            }
-
+            // ========== 錯誤顯示 ==========
             if let Some(error) = &self.last_error {
-                ui.colored_label(egui::Color32::RED, error);
+                ui.add_space(theme::SPACE_SM);
+                theme::section_frame(ui).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.colored_label(theme::error_color(), "⚠");
+                        ui.label(
+                            egui::RichText::new(error)
+                                .color(theme::error_color())
+                                .size(12.0),
+                        );
+                    });
+                });
             }
 
+            // ========== 輸出區 ==========
             if !self.transcription_draft.is_empty() {
-                ui.separator();
-                ui.label("快速模式草稿");
-                let mut draft = self.transcription_draft.clone();
-                ui.add(
-                    egui::TextEdit::multiline(&mut draft)
-                        .desired_rows(2)
-                        .desired_width(f32::INFINITY)
-                        .interactive(false),
-                );
+                ui.add_space(theme::SPACE_SM);
+                theme::card_frame(ui).show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new("快速模式草稿")
+                            .size(12.0)
+                            .color(theme::text_secondary()),
+                    );
+                    ui.add_space(theme::SPACE_XS);
+                    let mut draft = self.transcription_draft.clone();
+                    ui.add(
+                        egui::TextEdit::multiline(&mut draft)
+                            .desired_rows(2)
+                            .desired_width(f32::INFINITY)
+                            .interactive(false)
+                            .text_color(theme::text_primary()),
+                    );
+                });
             }
 
             if !self.last_result.is_empty() {
-                ui.separator();
-                ui.label("最近辨識結果");
-                let mut display_text = self.last_result.clone();
-                ui.add(
-                    egui::TextEdit::multiline(&mut display_text)
-                        .desired_rows(4)
-                        .desired_width(f32::INFINITY)
-                        .interactive(false),
-                );
+                ui.add_space(theme::SPACE_SM);
+                theme::card_frame(ui).show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new("最近辨識結果")
+                            .size(12.0)
+                            .color(theme::text_secondary()),
+                    );
+                    ui.add_space(theme::SPACE_XS);
+                    let mut display_text = self.last_result.clone();
+                    ui.add(
+                        egui::TextEdit::multiline(&mut display_text)
+                            .desired_rows(4)
+                            .desired_width(f32::INFINITY)
+                            .interactive(false)
+                            .text_color(theme::text_primary()),
+                    );
+                });
+            }
+
+            if !self.scratch_text.is_empty()
+                && self.config.output.buffer_mode == OutputBufferMode::Temporary
+            {
+                ui.add_space(theme::SPACE_SM);
+                theme::section_frame(ui).show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new("暫存區")
+                            .size(12.0)
+                            .color(theme::text_secondary()),
+                    );
+                    let mut scratch_text = self.scratch_text.clone();
+                    ui.add(
+                        egui::TextEdit::multiline(&mut scratch_text)
+                            .desired_rows(3)
+                            .desired_width(f32::INFINITY)
+                            .interactive(false)
+                            .text_color(theme::text_primary()),
+                    );
+                });
             }
 
             if self.recording {
@@ -784,19 +925,15 @@ impl eframe::App for SpeakTypeApp {
                 gui::draw_recording_overlay(ctx, true, self.input_level, elapsed, &mut || {
                     self.toggle_recording_action()
                 });
+                ctx.request_repaint_after(Duration::from_millis(50));
             }
 
-            if !self.scratch_text.is_empty()
-                && self.config.output.buffer_mode == OutputBufferMode::Temporary
-            {
-                ui.separator();
-                ui.label("暫存區");
-                let mut scratch_text = self.scratch_text.clone();
-                ui.add(
-                    egui::TextEdit::multiline(&mut scratch_text)
-                        .desired_rows(3)
-                        .desired_width(f32::INFINITY)
-                        .interactive(false),
+            if let Some(path) = self.engine.last_recording_path() {
+                ui.add_space(theme::SPACE_SM);
+                ui.label(
+                    egui::RichText::new(format!("最近錄音檔：{}", path.display()))
+                        .size(10.0)
+                        .color(theme::text_dim()),
                 );
             }
         });
@@ -854,86 +991,136 @@ impl SpeakTypeApp {
                     .auto_shrink([false, false])
                     .max_height(max_settings_height)
                     .show(ui, |ui| {
-                        ui.label("PTT");
-                        ui.horizontal(|ui| {
-                            ui.label("快捷鍵");
-                            ui.monospace(&self.config.hotkeys.record_toggle);
-                            if ui
-                                .button(if self.hotkey_capture {
-                                    "按下新的快捷鍵..."
-                                } else {
-                                    "捕捉"
-                                })
-                                .clicked()
-                            {
-                                self.hotkey_capture = true;
-                            }
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("手動輸入");
-                            let mut hotkey = self.config.hotkeys.record_toggle.clone();
-                            if ui.text_edit_singleline(&mut hotkey).lost_focus()
-                                && hotkey != self.config.hotkeys.record_toggle
-                            {
-                                match HotkeyCombo::parse(&hotkey) {
-                                    Ok(combo) => {
-                                        let display = combo.display();
-                                        self.config.hotkeys.record_toggle = display.clone();
-                                        if let Err(err) = self.hotkey.update_hotkey(&display) {
-                                            self.record_error(err);
-                                        }
-                                        should_save = true;
-                                    }
-                                    Err(err) => self.record_error(err),
+                        // ========== PTT 快速鍵 ==========
+                        theme::section_frame(ui).show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new("PTT 快速鍵")
+                                    .size(13.0)
+                                    .color(theme::text_primary()),
+                            );
+                            ui.add_space(theme::SPACE_SM);
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new("快捷鍵").color(theme::text_secondary()),
+                                );
+                                ui.monospace(&self.config.hotkeys.record_toggle);
+                                if ui
+                                    .button(if self.hotkey_capture {
+                                        "按下新的快捷鍵..."
+                                    } else {
+                                        "捕捉"
+                                    })
+                                    .clicked()
+                                {
+                                    self.hotkey_capture = true;
                                 }
-                            }
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new("手動輸入").color(theme::text_secondary()),
+                                );
+                                let mut hotkey = self.config.hotkeys.record_toggle.clone();
+                                if ui.text_edit_singleline(&mut hotkey).lost_focus()
+                                    && hotkey != self.config.hotkeys.record_toggle
+                                {
+                                    match HotkeyCombo::parse(&hotkey) {
+                                        Ok(combo) => {
+                                            let display = combo.display();
+                                            self.config.hotkeys.record_toggle = display.clone();
+                                            if let Err(err) = self.hotkey.update_hotkey(&display) {
+                                                self.record_error(err);
+                                            }
+                                            should_save = true;
+                                        }
+                                        Err(err) => self.record_error(err),
+                                    }
+                                }
+                            });
+                            should_save |= ui
+                                .checkbox(
+                                    &mut self.config.hotkeys.global_hotkey_enabled,
+                                    "啟用全域快捷鍵",
+                                )
+                                .changed();
+                            should_save |= ui
+                                .checkbox(
+                                    &mut self.config.hotkeys.hold_to_record,
+                                    "按住錄音，放開後轉錄",
+                                )
+                                .changed();
                         });
-                        should_save |= ui
-                            .checkbox(
-                                &mut self.config.hotkeys.global_hotkey_enabled,
-                                "啟用全域快捷鍵",
-                            )
-                            .changed();
-                        should_save |= ui
-                            .checkbox(
-                                &mut self.config.hotkeys.hold_to_record,
-                                "按住錄音，放開後轉錄",
-                            )
-                            .changed();
+                        ui.add_space(theme::SPACE_SM);
 
-                        ui.separator();
-                        ui.label("Windows 啟動");
-                        if ui
-                            .checkbox(
-                                &mut self.config.startup.launch_on_startup,
-                                "登入 Windows 後自動啟動",
-                            )
-                            .changed()
-                        {
-                            pending_startup_update = Some((
-                                self.config.startup.launch_on_startup,
-                                self.config.startup.start_hidden_to_tray,
-                            ));
-                            should_save = true;
-                        }
-                        if ui
-                            .checkbox(
-                                &mut self.config.startup.start_hidden_to_tray,
-                                "自動啟動時直接進入系統匣",
-                            )
-                            .changed()
-                        {
-                            if self.config.startup.launch_on_startup {
+                        // ========== Windows 啟動 ==========
+                        theme::section_frame(ui).show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new("Windows 啟動")
+                                    .size(13.0)
+                                    .color(theme::text_primary()),
+                            );
+                            ui.add_space(theme::SPACE_SM);
+                            if ui
+                                .checkbox(
+                                    &mut self.config.startup.launch_on_startup,
+                                    "登入 Windows 後自動啟動",
+                                )
+                                .changed()
+                            {
                                 pending_startup_update = Some((
                                     self.config.startup.launch_on_startup,
                                     self.config.startup.start_hidden_to_tray,
                                 ));
+                                should_save = true;
                             }
-                            should_save = true;
-                        }
+                            if ui
+                                .checkbox(
+                                    &mut self.config.startup.start_hidden_to_tray,
+                                    "自動啟動時直接進入系統匣",
+                                )
+                                .changed()
+                            {
+                                if self.config.startup.launch_on_startup {
+                                    pending_startup_update = Some((
+                                        self.config.startup.launch_on_startup,
+                                        self.config.startup.start_hidden_to_tray,
+                                    ));
+                                }
+                                should_save = true;
+                            }
+                        });
+                        ui.add_space(theme::SPACE_SM);
 
-                        ui.separator();
-                        ui.label("麥克風");
+                        // ========== 外觀主題 ==========
+                        theme::section_frame(ui).show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new("外觀主題")
+                                    .size(13.0)
+                                    .color(theme::text_primary()),
+                            );
+                            ui.add_space(theme::SPACE_SM);
+                            let current = theme::current_theme();
+                            let selected_label = current.label();
+                            egui::ComboBox::from_id_source("theme_selector")
+                                .selected_text(selected_label)
+                                .show_ui(ui, |cb_ui: &mut egui::Ui| {
+                                    for t in theme::SpeakTypeTheme::all() {
+                                        let label = t.label();
+                                        if cb_ui.selectable_label(current == *t, label).clicked() {
+                                            theme::switch_theme(ctx, *t);
+                                        }
+                                    }
+                                });
+                        });
+                        ui.add_space(theme::SPACE_SM);
+
+                        // ========== 麥克風 ==========
+                        theme::section_frame(ui).show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new("麥克風")
+                                    .size(13.0)
+                                    .color(theme::text_primary()),
+                            );
+                            ui.add_space(theme::SPACE_SM);
                         ui.horizontal(|ui| {
                             if ui.button("刷新裝置").clicked() {
                                 self.audio_devices = self.engine.input_devices();
@@ -1005,9 +1192,17 @@ impl SpeakTypeApp {
                             should_save = true;
                         }
                         ui.add(egui::ProgressBar::new(self.input_level).text("即時音量"));
+                        });
+                        ui.add_space(theme::SPACE_SM);
 
-                        ui.separator();
-                        ui.label("轉錄模式");
+                        // ========== 轉錄模式 ==========
+                        theme::section_frame(ui).show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new("轉錄模式")
+                                    .size(13.0)
+                                    .color(theme::text_primary()),
+                            );
+                            ui.add_space(theme::SPACE_SM);
                         should_save |= ui
                             .radio_value(
                                 &mut self.config.recording.transcription_mode,
@@ -1022,9 +1217,17 @@ impl SpeakTypeApp {
                                 "快速模式：先顯示草稿狀態，再輸出最終文字",
                             )
                             .changed();
+                        });
+                        ui.add_space(theme::SPACE_SM);
 
-                        ui.separator();
-                        ui.label("文字暫存");
+                        // ========== 文字暫存 ==========
+                        theme::section_frame(ui).show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new("文字暫存")
+                                    .size(13.0)
+                                    .color(theme::text_primary()),
+                            );
+                            ui.add_space(theme::SPACE_SM);
                         should_save |= ui
                             .radio_value(
                                 &mut self.config.output.buffer_mode,
@@ -1060,9 +1263,17 @@ impl SpeakTypeApp {
                                 ),
                             )
                             .changed();
+                        });
+                        ui.add_space(theme::SPACE_SM);
 
-                        ui.separator();
-                        ui.label("簡繁與用語轉換");
+                        // ========== 簡繁與用語轉換 ==========
+                        theme::section_frame(ui).show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new("簡繁與用語轉換")
+                                    .size(13.0)
+                                    .color(theme::text_primary()),
+                            );
+                            ui.add_space(theme::SPACE_SM);
                         should_save |= ui
                             .radio_value(
                                 &mut self.config.output.chinese_conversion,
@@ -1085,18 +1296,31 @@ impl SpeakTypeApp {
                             )
                             .changed();
 
-                        ui.separator();
+                        });
+                        ui.add_space(theme::SPACE_SM);
+
+                        // ========== 自訂詞庫 ==========
                         should_save |= gui::draw_vocabulary_settings(
                             ui,
                             &mut self.config.output.vocabulary.entries,
                         );
 
-                        ui.separator();
+                        ui.add_space(theme::SPACE_SM);
+
+                        // ========== 輸出規則 ==========
                         should_save |=
                             gui::draw_output_rules_settings(ui, &mut self.config.output.rules);
 
-                        ui.separator();
-                        ui.label("語音指令");
+                        ui.add_space(theme::SPACE_SM);
+
+                        // ========== 語音指令 ==========
+                        theme::section_frame(ui).show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new("語音指令")
+                                    .size(13.0)
+                                    .color(theme::text_primary()),
+                            );
+                            ui.add_space(theme::SPACE_SM);
                         should_save |= ui
                             .checkbox(
                                 &mut self.config.output.voice_commands_enabled,
@@ -1118,8 +1342,17 @@ impl SpeakTypeApp {
                             });
                         }
 
-                        ui.separator();
-                        ui.label("模型");
+                        });
+                        ui.add_space(theme::SPACE_SM);
+
+                        // ========== 模型 ==========
+                        theme::section_frame(ui).show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new("模型")
+                                    .size(13.0)
+                                    .color(theme::text_primary()),
+                            );
+                            ui.add_space(theme::SPACE_SM);
                         ui.label(format!("模型目錄：{}", paths::models_dir().display()));
                         if ui
                             .checkbox(&mut self.config.use_cuda, "啟用 CUDA 推論")
@@ -1153,8 +1386,17 @@ impl SpeakTypeApp {
                             }
                         });
 
-                        ui.separator();
-                        ui.label("錄音檔保留");
+                        });
+                        ui.add_space(theme::SPACE_SM);
+
+                        // ========== 錄音檔保留 ==========
+                        theme::section_frame(ui).show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new("錄音檔保留")
+                                    .size(13.0)
+                                    .color(theme::text_primary()),
+                            );
+                            ui.add_space(theme::SPACE_SM);
                         should_save |= ui
                             .add(
                                 egui::DragValue::new(&mut self.config.recording.retention_days)
@@ -1178,16 +1420,30 @@ impl SpeakTypeApp {
                             );
                         }
 
-                        ui.separator();
-                        ui.label("診斷");
-                        if ui.button("匯出診斷包").clicked() {
-                            pending_diagnostic_export = true;
-                        }
-                        ui.label(
-                            "診斷包會包含設定、log、最近錯誤、裝置與模型資訊；不包含錄音內容。",
-                        );
+                        });
+                        ui.add_space(theme::SPACE_SM);
 
-                        ui.separator();
+                        // ========== 診斷 ==========
+                        theme::section_frame(ui).show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new("診斷")
+                                    .size(13.0)
+                                    .color(theme::text_primary()),
+                            );
+                            ui.add_space(theme::SPACE_SM);
+                            if ui.button("匯出診斷包").clicked() {
+                                pending_diagnostic_export = true;
+                            }
+                            ui.label(
+                                egui::RichText::new(
+                                    "診斷包會包含設定、log、最近錯誤、裝置與模型資訊；不包含錄音內容。"
+                                )
+                                .size(11.0)
+                                .color(theme::text_secondary()),
+                            );
+                        });
+
+                        ui.add_space(theme::SPACE_SM);
                         if ui.button("儲存設定").clicked() {
                             should_save = true;
                         }
@@ -1237,9 +1493,17 @@ impl SpeakTypeApp {
             .resizable(true)
             .default_width(760.0)
             .show(ctx, |ui| {
-                ui.label(format!("模型資料夾：{}", paths::models_dir().display()));
-                ui.label("下載時會使用遠端 ETag 可用資訊做驗證；大型模型不會在 GUI 開啟時即時計算 SHA256。");
-                ui.separator();
+                ui.label(
+                    egui::RichText::new(format!("模型資料夾：{}", paths::models_dir().display()))
+                        .size(11.0)
+                        .color(theme::text_secondary()),
+                );
+                ui.label(
+                    egui::RichText::new("下載時會使用遠端 ETag 可用資訊做驗證；大型模型不會在 GUI 開啟時即時計算 SHA256。")
+                        .size(11.0)
+                        .color(theme::text_dim()),
+                );
+                ui.add_space(theme::SPACE_SM);
 
                 let models_base = PathBuf::from(self.config.get_models_dir());
                 for entry in MODEL_CATALOG {
@@ -1247,50 +1511,89 @@ impl SpeakTypeApp {
                     let installed = path.exists();
                     let current = self.config.get_model_name() == entry.name;
 
-                    ui.group(|ui| {
+                    theme::card_frame(ui).show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.heading(entry.label);
+                            ui.label(
+                                egui::RichText::new(entry.label)
+                                    .size(15.0)
+                                    .color(theme::text_primary()),
+                            );
                             if current {
-                                ui.colored_label(egui::Color32::from_rgb(60, 200, 120), "目前使用");
+                                ui.colored_label(theme::success_color(), "目前使用");
                             }
-                            ui.label(entry.approx_size);
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.label(
+                                    egui::RichText::new(entry.approx_size)
+                                        .size(11.0)
+                                        .color(theme::text_secondary()),
+                                );
+                            });
                         });
-                        ui.label(entry.recommendation);
-                        ui.label(format!("URL：{}", models::model_url(entry.file_name)));
-                        ui.label(format!(
-                            "狀態：{}",
-                            if installed { "已安裝" } else { "未下載" }
-                        ));
-                        if installed {
-                            ui.label(format!("檔案：{}", path.display()));
-                            if let Ok(metadata) = std::fs::metadata(&path) {
-                                ui.label(format!("大小：{}", gui::format_bytes(metadata.len())));
-                            }
-                        }
+                        ui.add_space(theme::SPACE_XS);
+                        ui.label(
+                            egui::RichText::new(entry.recommendation)
+                                .size(12.0)
+                                .color(theme::text_secondary()),
+                        );
+                        ui.label(
+                            egui::RichText::new(format!("URL：{}", models::model_url(entry.file_name)))
+                                .size(10.0)
+                                .color(theme::text_dim()),
+                        );
 
-                        // SHA256 verification status (selectable for copy)
+                        ui.horizontal(|ui| {
+                            let status_color = if installed { theme::success_color() } else { theme::warning_color() };
+                            ui.colored_label(status_color, if installed { "已安裝" } else { "未下載" });
+                            if installed {
+                                if let Ok(metadata) = std::fs::metadata(&path) {
+                                    ui.label(
+                                        egui::RichText::new(gui::format_bytes(metadata.len()))
+                                            .size(11.0)
+                                            .color(theme::text_secondary()),
+                                    );
+                                }
+                            }
+                        });
+
+                        // SHA256 verification status
                         if let Some(sha256_err) = self.model_sha256_errors.get(entry.name) {
+                            ui.add_space(theme::SPACE_XS);
                             ui.add(
                                 egui::Label::new(
                                     egui::RichText::new(format!("⚠ SHA256 校驗不一致：{}", sha256_err))
-                                        .color(egui::Color32::RED),
+                                        .color(theme::error_color()),
                                 )
                                 .selectable(true),
                             );
                         }
 
+                        ui.add_space(theme::SPACE_SM);
                         ui.horizontal(|ui| {
-                            if ui.button("使用此模型").clicked() {
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        egui::RichText::new("使用此模型").color(theme::accent_color()),
+                                    )
+                                    .fill(theme::bg_faint())
+                                    .rounding(egui::Rounding::same(theme::RADIUS_SM)),
+                                )
+                                .clicked()
+                            {
                                 selected_model = Some((entry.name, false));
                             }
                             if ui
-                                .button(if installed { "重新下載" } else { "下載" })
+                                .add(
+                                    egui::Button::new(if installed { "重新下載" } else { "下載" })
+                                        .fill(theme::bg_faint())
+                                        .rounding(egui::Rounding::same(theme::RADIUS_SM)),
+                                )
                                 .clicked()
                             {
                                 self.pending_download_confirm = Some(entry.name.to_string());
                             }
                         });
                     });
+                    ui.add_space(theme::SPACE_SM);
                 }
             });
 
@@ -1308,57 +1611,84 @@ impl SpeakTypeApp {
             .resizable(true)
             .default_width(720.0)
             .show(ctx, |ui| {
-                ui.label(format!("資料夾：{}", paths::recordings_dir().display()));
-                ui.horizontal(|ui| {
-                    ui.label("日期篩選");
-                    ui.text_edit_singleline(&mut self.recording_filter);
-                    if ui.button("開啟資料夾").clicked() {
-                        if let Err(err) = recordings::open_recordings_folder() {
-                            error = Some(err);
+                ui.label(
+                    egui::RichText::new(format!("資料夾：{}", paths::recordings_dir().display()))
+                        .size(11.0)
+                        .color(theme::text_secondary()),
+                );
+                theme::section_frame(ui).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new("日期篩選").color(theme::text_secondary()),
+                        );
+                        ui.text_edit_singleline(&mut self.recording_filter);
+                        if ui.button("開啟資料夾").clicked() {
+                            if let Err(err) = recordings::open_recordings_folder() {
+                                error = Some(err);
+                            }
                         }
-                    }
+                    });
                 });
+                ui.add_space(theme::SPACE_SM);
 
-                ui.separator();
                 let files = recordings::list_recordings(&self.recording_filter);
                 if files.is_empty() {
-                    ui.label("沒有符合條件的錄音檔");
+                    ui.label(
+                        egui::RichText::new("沒有符合條件的錄音檔")
+                            .color(theme::text_secondary()),
+                    );
                     return;
                 }
 
                 let total_size = files.iter().map(|file| file.size_bytes).sum::<u64>();
-                ui.label(format!(
-                    "共 {} 筆，{}",
-                    files.len(),
-                    gui::format_bytes(total_size)
-                ));
+                ui.label(
+                    egui::RichText::new(format!("共 {} 筆，{}", files.len(), gui::format_bytes(total_size)))
+                        .size(11.0)
+                        .color(theme::text_secondary()),
+                );
+                ui.add_space(theme::SPACE_SM);
 
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    for file in files {
-                        ui.group(|ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(file.modified.format("%Y-%m-%d %H:%M:%S").to_string());
-                                ui.monospace(&file.file_name);
-                                ui.label(gui::format_bytes(file.size_bytes));
-                            });
-                            ui.horizontal(|ui| {
-                                if ui.button("播放").clicked() {
-                                    if let Err(err) = recordings::play_recording(&file.path) {
-                                        error = Some(err);
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        for file in files {
+                            theme::card_frame(ui).show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        egui::RichText::new(
+                                            file.modified.format("%Y-%m-%d %H:%M:%S").to_string(),
+                                        )
+                                        .size(11.0)
+                                        .color(theme::text_secondary()),
+                                    );
+                                    ui.monospace(&file.file_name);
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        ui.label(
+                                            egui::RichText::new(gui::format_bytes(file.size_bytes))
+                                                .color(theme::text_secondary()),
+                                        );
+                                    });
+                                });
+                                ui.add_space(theme::SPACE_SM);
+                                ui.horizontal(|ui| {
+                                    if ui.button("播放").clicked() {
+                                        if let Err(err) = recordings::play_recording(&file.path) {
+                                            error = Some(err);
+                                        }
                                     }
-                                }
-                                if ui.button("重新轉錄").clicked() {
-                                    self.selected_recording_for_retry = Some(file.path.clone());
-                                }
-                                if ui.button("刪除").clicked() {
-                                    if let Err(err) = recordings::delete_recording(&file.path) {
-                                        error = Some(err);
+                                    if ui.button("重新轉錄").clicked() {
+                                        self.selected_recording_for_retry = Some(file.path.clone());
                                     }
-                                }
+                                    if ui.button("刪除").clicked() {
+                                        if let Err(err) = recordings::delete_recording(&file.path) {
+                                            error = Some(err);
+                                        }
+                                    }
+                                });
                             });
-                        });
-                    }
-                });
+                            ui.add_space(theme::SPACE_SM);
+                        }
+                    });
             });
 
         if let Some(error) = error {
@@ -1383,7 +1713,11 @@ impl SpeakTypeApp {
             .resizable(true)
             .default_width(560.0)
             .show(ctx, |ui| {
-                ui.label(&self.model_status_message);
+                ui.label(
+                    egui::RichText::new(&self.model_status_message)
+                        .color(theme::text_primary()),
+                );
+                ui.add_space(theme::SPACE_SM);
                 if progress.is_some() {
                     gui::views::draw_model_download_status(
                         ui,
@@ -1398,6 +1732,7 @@ impl SpeakTypeApp {
                         },
                     );
                 } else {
+                    ui.add_space(theme::SPACE_MD);
                     ui.spinner();
                 }
             });
@@ -1429,21 +1764,50 @@ impl SpeakTypeApp {
             .default_width(420.0)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
-                ui.label(format!("確定要下載模型「{}」嗎？", model_label));
-                ui.add_space(4.0);
-                if let Some(e) = entry {
-                    ui.label(format!("檔名：{}", e.file_name));
-                    ui.label(format!("大小：{}", e.approx_size));
-                }
-                ui.add_space(8.0);
-                let models_dir = self.config.get_models_dir();
-                ui.label(format!("下載位置：{}", models_dir));
-                ui.add_space(4.0);
-                ui.colored_label(
-                    egui::Color32::YELLOW,
-                    "下載過程中請勿關閉應用程式。大型模型可能需要數分鐘。",
-                );
-                ui.add_space(12.0);
+                theme::card_frame(ui).show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new(format!("確定要下載模型「{}」嗎？", model_label))
+                            .size(15.0)
+                            .color(theme::text_primary()),
+                    );
+                    ui.add_space(theme::SPACE_SM);
+                    if let Some(e) = entry {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new("檔名：").color(theme::text_secondary()),
+                            );
+                            ui.label(
+                                egui::RichText::new(e.file_name).color(theme::text_primary()),
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new("大小：").color(theme::text_secondary()),
+                            );
+                            ui.label(
+                                egui::RichText::new(e.approx_size).color(theme::text_primary()),
+                            );
+                        });
+                    }
+                    let models_dir = self.config.get_models_dir();
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new("下載位置：").color(theme::text_secondary()),
+                        );
+                        ui.label(
+                            egui::RichText::new(models_dir.to_string())
+                                .size(10.0)
+                                .color(theme::text_dim()),
+                        );
+                    });
+                    ui.add_space(theme::SPACE_SM);
+                    ui.label(
+                        egui::RichText::new("下載過程中請勿關閉應用程式。大型模型可能需要數分鐘。")
+                            .size(11.0)
+                            .color(theme::warning_color()),
+                    );
+                });
+                ui.add_space(theme::SPACE_SM);
                 ui.horizontal(|ui| {
                     if ui.button("取消").clicked() {
                         self.pending_download_confirm = None;

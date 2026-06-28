@@ -1,7 +1,9 @@
 use crate::modules::gui;
+use crate::modules::gui::theme::*;
 use crate::modules::history::HistoryManager;
-use crate::modules::recordings::{self, RecordingFile};
+use crate::modules::recordings::RecordingFile;
 use eframe::egui;
+use eframe::egui::Rounding;
 use std::path::Path;
 
 pub fn draw_history_window(
@@ -16,38 +18,67 @@ pub fn draw_history_window(
         .default_width(520.0)
         .show(ctx, |ui| {
             if history.records().is_empty() {
-                ui.label("尚無紀錄");
+                ui.label(
+                    egui::RichText::new("尚無紀錄").color(text_secondary()),
+                );
                 return;
             }
 
             if let Some(path) = HistoryManager::history_path() {
-                ui.label(format!("紀錄檔：{}", path.display()));
+                ui.label(
+                    egui::RichText::new(format!("紀錄檔：{}", path.display()))
+                        .size(11.0)
+                        .color(text_secondary()),
+                );
                 ui.separator();
             }
 
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                for record in history.records() {
-                    ui.group(|ui| {
-                        ui.label(format!(
-                            "{} [{}] {:.1} 秒",
-                            record.timestamp.format("%Y-%m-%d %H:%M:%S"),
-                            record.scenario,
-                            record.duration_sec
-                        ));
-                        let mut text = record.text.clone();
-                        ui.add(
-                            egui::TextEdit::multiline(&mut text)
-                                .desired_width(f32::INFINITY)
-                                .interactive(false),
-                        );
-                    });
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    for record in history.records() {
+                        card_frame(ui).show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new(
+                                        record.timestamp.format("%Y-%m-%d %H:%M:%S").to_string(),
+                                    )
+                                    .size(11.0)
+                                    .color(text_secondary()),
+                                );
+                                ui.label(
+                                    egui::RichText::new(format!("[{}]", record.scenario))
+                                        .size(11.0)
+                                        .color(accent_color()),
+                                );
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.label(
+                                        egui::RichText::new(format!("{:.1} 秒", record.duration_sec))
+                                            .size(11.0)
+                                            .color(text_secondary()),
+                                    );
+                                });
+                            });
+                            ui.add_space(SPACE_XS);
+                            let mut text = record.text.clone();
+                            ui.add(
+                                egui::TextEdit::multiline(&mut text)
+                                    .desired_width(f32::INFINITY)
+                                    .interactive(false)
+                                    .text_color(text_primary()),
+                            );
+                        });
+                        ui.add_space(SPACE_SM);
+                    }
+                });
+
+            ui.add_space(SPACE_SM);
+            ui.separator();
+            ui.horizontal(|ui| {
+                if ui.button("清除紀錄").clicked() {
+                    on_clear();
                 }
             });
-
-            ui.separator();
-            if ui.button("清除紀錄").clicked() {
-                on_clear();
-            }
         });
 }
 
@@ -63,20 +94,41 @@ pub fn draw_error_window(
         .resizable(true)
         .default_width(560.0)
         .show(ctx, |ui| {
-            ui.label(format!("Log 檔案：{}", log_path.display()));
+            ui.label(
+                egui::RichText::new(format!("Log 檔案：{}", log_path.display()))
+                    .size(11.0)
+                    .color(text_secondary()),
+            );
             ui.separator();
             if errors.is_empty() {
-                ui.label("目前沒有錯誤紀錄");
+                ui.label(
+                    egui::RichText::new("目前沒有錯誤紀錄").color(text_secondary()),
+                );
             } else {
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    for error in errors {
-                        ui.colored_label(egui::Color32::RED, error);
-                        ui.separator();
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        for error in errors {
+                            card_frame(ui).show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.colored_label(error_color(), "⚠");
+                                    ui.add_space(SPACE_SM);
+                                    ui.label(
+                                        egui::RichText::new(error)
+                                            .color(text_primary())
+                                            .size(12.0),
+                                    );
+                                });
+                            });
+                            ui.add_space(SPACE_SM);
+                        }
+                    });
+                ui.add_space(SPACE_SM);
+                ui.horizontal(|ui| {
+                    if ui.button("清除畫面紀錄").clicked() {
+                        on_clear();
                     }
                 });
-                if ui.button("清除畫面紀錄").clicked() {
-                    on_clear();
-                }
             }
         });
 }
@@ -94,26 +146,50 @@ pub fn draw_model_download_status(
         .map(|total| progress.downloaded_bytes as f32 / total.max(1) as f32)
         .unwrap_or(0.0)
         .clamp(0.0, 1.0);
-    ui.add(egui::ProgressBar::new(fraction).show_percentage());
 
-    let total = progress
-        .total_bytes
-        .map(gui::format_bytes)
-        .unwrap_or_else(|| "未知大小".to_string());
-    ui.label(format!(
-        "{} / {}，{}/s",
-        gui::format_bytes(progress.downloaded_bytes),
-        total,
-        gui::format_bytes(progress.speed_bytes_per_sec as u64)
-    ));
-    ui.label(format!("來源：{}", progress.url));
-    ui.horizontal(|ui| {
-        if ui.button("取消下載").clicked() {
-            on_cancel();
-        }
-        if ui.button("重試下載").clicked() {
-            on_retry();
-        }
+    card_frame(ui).show(ui, |ui| {
+        ui.label(
+            egui::RichText::new("下載中")
+                .size(13.0)
+                .color(text_primary()),
+        );
+        ui.add_space(SPACE_SM);
+        ui.add(
+            egui::ProgressBar::new(fraction)
+                .show_percentage()
+                .fill(accent_color())
+                .desired_height(6.0),
+        );
+        ui.add_space(SPACE_XS);
+
+        let total = progress
+            .total_bytes
+            .map(gui::format_bytes)
+            .unwrap_or_else(|| "未知大小".to_string());
+        ui.label(
+            egui::RichText::new(format!(
+                "{} / {}　{}/s",
+                gui::format_bytes(progress.downloaded_bytes),
+                total,
+                gui::format_bytes(progress.speed_bytes_per_sec as u64)
+            ))
+            .size(11.0)
+            .color(text_secondary()),
+        );
+        ui.label(
+            egui::RichText::new(format!("來源：{}", progress.url))
+                .size(10.0)
+                .color(text_dim()),
+        );
+        ui.add_space(SPACE_SM);
+        ui.horizontal(|ui| {
+            if ui.button("取消下載").clicked() {
+                on_cancel();
+            }
+            if ui.button("重試下載").clicked() {
+                on_retry();
+            }
+        });
     });
 }
 
@@ -125,37 +201,80 @@ pub fn draw_recordings_list(
     on_delete: &mut dyn FnMut(&Path),
 ) {
     if files.is_empty() {
-        ui.label("沒有符合條件的錄音檔");
+        ui.label(
+            egui::RichText::new("沒有符合條件的錄音檔").color(text_secondary()),
+        );
         return;
     }
 
     let total_size = files.iter().map(|file| file.size_bytes).sum::<u64>();
-    ui.label(format!(
-        "共 {} 筆，{}",
-        files.len(),
-        gui::format_bytes(total_size)
-    ));
+    ui.label(
+        egui::RichText::new(format!("共 {} 筆，{}", files.len(), gui::format_bytes(total_size)))
+            .size(11.0)
+            .color(text_secondary()),
+    );
+    ui.add_space(SPACE_SM);
 
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        for file in files {
-            ui.group(|ui| {
-                ui.horizontal(|ui| {
-                    ui.label(file.modified.format("%Y-%m-%d %H:%M:%S").to_string());
-                    ui.monospace(&file.file_name);
-                    ui.label(gui::format_bytes(file.size_bytes));
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            for file in files {
+                card_frame(ui).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(
+                                file.modified.format("%Y-%m-%d %H:%M:%S").to_string(),
+                            )
+                            .size(11.0)
+                            .color(text_secondary()),
+                        );
+                        ui.monospace(&file.file_name);
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(
+                                egui::RichText::new(gui::format_bytes(file.size_bytes))
+                                    .color(text_secondary()),
+                            );
+                        });
+                    });
+                    ui.add_space(SPACE_SM);
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new("播放").color(text_primary()),
+                                )
+                                .fill(bg_faint())
+                                .rounding(Rounding::same(RADIUS_SM)),
+                            )
+                            .clicked()
+                        {
+                            on_play(&file.path);
+                        }
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new("重新轉錄").color(text_primary()),
+                                )
+                                .fill(bg_faint())
+                                .rounding(Rounding::same(RADIUS_SM)),
+                            )
+                            .clicked()
+                        {
+                            on_retry(&file.path);
+                        }
+                        if ui
+                            .add(
+                                egui::Button::new(egui::RichText::new("刪除").color(error_color()))
+                                    .fill(bg_faint())
+                                    .rounding(Rounding::same(RADIUS_SM)),
+                            )
+                            .clicked()
+                        {
+                            on_delete(&file.path);
+                        }
+                    });
                 });
-                ui.horizontal(|ui| {
-                    if ui.button("播放").clicked() {
-                        on_play(&file.path);
-                    }
-                    if ui.button("重新轉錄").clicked() {
-                        on_retry(&file.path);
-                    }
-                    if ui.button("刪除").clicked() {
-                        on_delete(&file.path);
-                    }
-                });
-            });
-        }
-    });
+                ui.add_space(SPACE_SM);
+            }
+        });
 }
