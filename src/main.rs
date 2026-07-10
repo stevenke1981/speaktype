@@ -5,6 +5,7 @@ mod app;
 use app::SpeakTypeApp;
 use eframe::NativeOptions;
 use speaktype::modules::error::{install_panic_hook, log_error};
+use speaktype::modules::icon::load_app_icon;
 
 fn main() {
     install_panic_hook();
@@ -14,10 +15,18 @@ fn main() {
     };
 
     let start_hidden_to_tray = std::env::args().any(|arg| arg == "--tray");
+    let viewport = egui::ViewportBuilder::default()
+        .with_inner_size([560.0, 560.0])
+        .with_title("SpeakType");
+    let viewport = match load_app_icon() {
+        Ok(icon) => viewport.with_icon(icon),
+        Err(err) => {
+            log_error("app icon", err);
+            viewport
+        }
+    };
     let options = NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([560.0, 560.0])
-            .with_title("SpeakType"),
+        viewport,
         ..Default::default()
     };
 

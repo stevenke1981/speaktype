@@ -346,7 +346,7 @@ fn normalize_audio(samples: &mut [f32]) {
     }
 
     let target_rms = 0.25;
-    let gain = (target_rms / rms).min(4.0).max(0.25);
+    let gain = (target_rms / rms).clamp(0.25, 4.0);
 
     if (gain - 1.0).abs() > 0.05 {
         for sample in samples.iter_mut() {

@@ -1,4 +1,6 @@
 use crate::modules::error::log_error;
+#[cfg(not(windows))]
+use crate::modules::icon::load_app_icon;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
@@ -98,30 +100,14 @@ fn action_from_menu_id(id: &str) -> Option<TrayAction> {
 }
 
 fn create_icon() -> Result<Icon, String> {
-    let width = 32_u32;
-    let height = 32_u32;
-    let mut rgba = Vec::with_capacity((width * height * 4) as usize);
-
-    for y in 0..height {
-        for x in 0..width {
-            let dx = x as f32 - 16.0;
-            let dy = y as f32 - 16.0;
-            let distance = (dx * dx + dy * dy).sqrt();
-            let inside = distance <= 14.0;
-            let mic_body = (12..=20).contains(&x) && (7..=20).contains(&y);
-            let mic_stem = (15..=17).contains(&x) && (20..=26).contains(&y);
-            let mic_base = (10..=22).contains(&x) && (25..=27).contains(&y);
-
-            let (r, g, b, a) = if mic_body || mic_stem || mic_base {
-                (255, 255, 255, 255)
-            } else if inside {
-                (36, 168, 96, 255)
-            } else {
-                (0, 0, 0, 0)
-            };
-            rgba.extend_from_slice(&[r, g, b, a]);
-        }
+    #[cfg(windows)]
+    {
+        Icon::from_resource(1, Some((32, 32))).map_err(|err| err.to_string())
     }
 
-    Icon::from_rgba(rgba, width, height).map_err(|err| err.to_string())
+    #[cfg(not(windows))]
+    {
+        let icon = load_app_icon()?;
+        Icon::from_rgba(icon.rgba, icon.width, icon.height).map_err(|err| err.to_string())
+    }
 }

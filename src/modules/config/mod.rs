@@ -551,13 +551,13 @@ mod tests {
     #[test]
     fn app_config_defaults_are_valid() {
         let config = AppConfig::default();
-        assert_eq!(config.use_cuda, true);
+        assert!(config.use_cuda);
         assert_eq!(config.hotkeys.record_toggle, "Ctrl+Shift+L");
-        assert_eq!(config.hotkeys.hold_to_record, true);
+        assert!(config.hotkeys.hold_to_record);
         assert_eq!(config.recording.sample_rate, 16000);
         assert_eq!(config.recording.retention_days, 30);
         assert_eq!(config.recording.max_total_mb, 4096);
-        assert_eq!(config.output.auto_inject_focused_window, true);
+        assert!(config.output.auto_inject_focused_window);
         assert_eq!(config.output.chinese_conversion, ChineseConversionMode::Disabled);
         assert_eq!(config.output.buffer_mode, OutputBufferMode::Temporary);
     }
@@ -603,7 +603,7 @@ mod tests {
         "#;
         let mut config: AppConfig = toml::from_str(toml_str).unwrap();
         config.migrate_defaults();
-        assert_eq!(config.hotkeys.hold_to_record, true);
+        assert!(config.hotkeys.hold_to_record);
     }
 
     #[test]
@@ -622,14 +622,14 @@ mod tests {
     #[test]
     fn scenario_output_rules_have_sensible_defaults() {
         let chat = ScenarioOutputRules::chat();
-        assert_eq!(chat.auto_punctuation, true);
-        assert_eq!(chat.remove_fillers, true);
+        assert!(chat.auto_punctuation);
+        assert!(!chat.remove_fillers);
 
         let code = ScenarioOutputRules::code();
-        assert_eq!(code.preserve_code_symbols, true);
-        assert_eq!(code.auto_punctuation, false);
+        assert!(code.preserve_code_symbols);
+        assert!(!code.auto_punctuation);
 
         let writing = ScenarioOutputRules::writing();
-        assert_eq!(writing.format_paragraphs, true);
+        assert!(writing.format_paragraphs);
     }
 }

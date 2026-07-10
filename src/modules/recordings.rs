@@ -50,7 +50,7 @@ pub fn list_recordings(date_filter: &str) -> Vec<RecordingFile> {
         })
         .collect::<Vec<_>>();
 
-    files.sort_by(|left, right| right.modified.cmp(&left.modified));
+    files.sort_by_key(|file| std::cmp::Reverse(file.modified));
     files
 }
 
@@ -76,7 +76,7 @@ pub fn cleanup_recordings(retention_days: u32, max_total_mb: u64) {
 
     let max_total_bytes = max_total_mb.saturating_mul(1024 * 1024);
     let mut total_bytes = files.iter().map(|file| file.size_bytes).sum::<u64>();
-    files.sort_by(|left, right| left.modified.cmp(&right.modified));
+    files.sort_by_key(|file| file.modified);
 
     for file in files {
         if total_bytes <= max_total_bytes {

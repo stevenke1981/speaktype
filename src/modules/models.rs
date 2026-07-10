@@ -65,7 +65,7 @@ pub fn cleanup_stale_temp_files() {
                 && path
                     .file_stem()
                     .and_then(|s| s.to_str())
-                    .map_or(false, |stem| stem.ends_with(".bin"))
+                    .is_some_and(|stem| stem.ends_with(".bin"))
             {
                 let _ = std::fs::remove_file(&path);
             }

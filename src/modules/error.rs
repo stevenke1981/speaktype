@@ -87,6 +87,7 @@ pub fn log_file_path() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::error::Error;
 
     #[test]
     fn speaktype_error_display() {

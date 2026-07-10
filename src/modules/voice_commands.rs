@@ -325,7 +325,11 @@ mod tests {
         execute_voice_command(&VoiceCommand::SelectAll, &mut mock);
         assert_eq!(
             mock.keys,
-            vec!["ControlDown", "a", "ControlUp"] as Vec<String>
+            vec![
+                "ControlDown".to_string(),
+                "a".to_string(),
+                "ControlUp".to_string()
+            ]
         );
     }
 

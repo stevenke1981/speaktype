@@ -745,6 +745,17 @@ fn is_sha256_hex(value: &str) -> bool {
     value.len() == 64 && value.chars().all(|ch| ch.is_ascii_hexdigit())
 }
 
+fn classify_recording_error(error: &str) -> String {
+    let lower = error.to_ascii_lowercase();
+    if lower.contains("access") || lower.contains("permission") {
+        "無法開始錄音：麥克風權限可能未開啟".to_string()
+    } else if lower.contains("device") || lower.contains("input") {
+        "無法開始錄音：找不到可用麥克風".to_string()
+    } else {
+        format!("無法開始錄音: {error}")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -783,25 +794,25 @@ mod tests {
     }
 
     #[test]
-    fn is_valid_sha256_accepts_correct_hash() {
+    fn is_sha256_hex_accepts_correct_hash() {
         let valid = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
-        assert!(is_valid_sha256(valid));
+        assert!(is_sha256_hex(valid));
     }
 
     #[test]
-    fn is_valid_sha256_rejects_short_hash() {
-        assert!(!is_valid_sha256("abc123"));
+    fn is_sha256_hex_rejects_short_hash() {
+        assert!(!is_sha256_hex("abc123"));
     }
 
     #[test]
-    fn is_valid_sha256_rejects_invalid_chars() {
+    fn is_sha256_hex_rejects_invalid_chars() {
         let invalid = "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg";
-        assert!(!is_valid_sha256(invalid));
+        assert!(!is_sha256_hex(invalid));
     }
 
     #[test]
-    fn is_valid_sha256_rejects_empty() {
-        assert!(!is_valid_sha256(""));
+    fn is_sha256_hex_rejects_empty() {
+        assert!(!is_sha256_hex(""));
     }
 
     #[test]
@@ -827,14 +838,14 @@ mod tests {
         let engine = SpeakTypeEngine::new(PathBuf::from("nonexistent.bin"), false);
         assert!(!engine.is_recording());
         assert!(engine.model_error().is_some());
-        assert!(!engine.is_model_ready());
+        assert!(!engine.model_ready);
     }
 
     #[test]
     fn speaktype_engine_set_model_path() {
         let mut engine = SpeakTypeEngine::new(PathBuf::from("nonexistent.bin"), false);
         engine.set_model_path(PathBuf::from("/tmp/other.bin"), true);
-        assert!(!engine.is_model_ready());
+        assert!(!engine.model_ready);
         assert_eq!(engine.model_status_text(), "模型尚未下載或尚未準備完成");
     }
 
@@ -848,16 +859,5 @@ mod tests {
         };
         assert_eq!(progress.downloaded_bytes, 500);
         assert_eq!(progress.total_bytes, Some(1000));
-    }
-}
-
-fn classify_recording_error(error: &str) -> String {
-    let lower = error.to_ascii_lowercase();
-    if lower.contains("access") || lower.contains("permission") {
-        "無法開始錄音：麥克風權限可能未開啟".to_string()
-    } else if lower.contains("device") || lower.contains("input") {
-        "無法開始錄音：找不到可用麥克風".to_string()
-    } else {
-        format!("無法開始錄音: {error}")
     }
 }

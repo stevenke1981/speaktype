@@ -9,7 +9,7 @@ edition = "2021"
 unsafe_op_in_unsafe_fn = "deny"
 
 [lints.clippy]
-all = "warn"
+all = { level = "warn", priority = -1 }
 unwrap_used = "allow"
 bool_to_int_with_if = "allow"
 
@@ -32,3 +32,6 @@ chrono = { version = "0.4", features = ["serde"] }
 hound = "3.5"
 ferrous-opencc = "0.4"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
+
+[build-dependencies]
+winresource = "0.1"

@@ -3,6 +3,8 @@ Name "SpeakType"
 OutFile "${PROJECT_ROOT}\dist\packages\SpeakType-Setup.exe"
 InstallDir "$PROGRAMFILES64\SpeakType"
 RequestExecutionLevel admin
+Icon "${PROJECT_ROOT}\assets\speaktype.ico"
+UninstallIcon "${PROJECT_ROOT}\assets\speaktype.ico"
 
 !define APP_EXE "speaktype.exe"
 !define RUN_KEY "Software\Microsoft\Windows\CurrentVersion\Run"
@@ -28,6 +30,7 @@ Section "SpeakType" SEC_APP
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SpeakType" "DisplayName" "SpeakType"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SpeakType" "UninstallString" "$INSTDIR\Uninstall.exe"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SpeakType" "InstallLocation" "$INSTDIR"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\SpeakType" "DisplayIcon" "$INSTDIR\${APP_EXE}"
 SectionEnd
 
 Section "Start with Windows in tray" SEC_STARTUP

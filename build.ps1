@@ -27,6 +27,17 @@ $ErrorActionPreference = "Stop"
 $projectRoot = $PSScriptRoot
 Set-Location $projectRoot
 
+$cargoPath = (Get-Command cargo.exe -ErrorAction SilentlyContinue).Source
+if (-not $cargoPath) {
+    $cargoCandidate = Join-Path $env:USERPROFILE ".cargo\bin\cargo.exe"
+    if (Test-Path $cargoCandidate) {
+        $cargoPath = $cargoCandidate
+    }
+}
+if (-not $cargoPath) {
+    throw "cargo.exe was not found. Install Rust with rustup before building SpeakType."
+}
+
 $configuration = if ($Release) { "Release" } else { "Debug" }
 $buildType = if ($Release) { "--release" } else { "" }
 
@@ -38,7 +49,7 @@ Write-Host ""
 # 1. 清除舊建置（如果需要）
 if ($Clean) {
     Write-Host "[1/6] 清除舊的建置快取..." -ForegroundColor Yellow
-    cargo clean
+    & $cargoPath clean
     Write-Host "    已清除 target/ 目錄" -ForegroundColor Green
     Write-Host ""
 }
@@ -132,20 +143,66 @@ Write-Host ""
 
 # 4. 設定 LIBCLANG_PATH（whisper-rs 需要）
 Write-Host "[4/6] 檢查 LIBCLANG_PATH..." -ForegroundColor Yellow
-$llvmPath = "C:\Program Files\LLVM"
-$clangDll = Join-Path $llvmPath "bin\clang.dll"
+$llvmBinCandidates = @(
+    "C:\Program Files\LLVM\bin",
+    (Join-Path $vsPath "VC\Tools\Llvm\x64\bin"),
+    (Join-Path $vsPath "VC\Tools\Llvm\bin")
+)
+$llvmBin = $llvmBinCandidates |
+    Where-Object {
+        (Test-Path (Join-Path $_ "libclang.dll")) -or
+        (Test-Path (Join-Path $_ "clang.dll"))
+    } |
+    Select-Object -First 1
 
-if (Test-Path $clangDll) {
-    $env:LIBCLANG_PATH = Join-Path $llvmPath "bin"
-    Write-Host "    [✓] LIBCLANG_PATH 已設定" -ForegroundColor Green
+if ($llvmBin) {
+    $env:LIBCLANG_PATH = $llvmBin
+    Write-Host "    [✓] LIBCLANG_PATH 已設定: $llvmBin" -ForegroundColor Green
 } else {
     Write-Host "    [!] 未找到 LLVM，建議先執行 install-deps.ps1" -ForegroundColor Yellow
 }
 Write-Host ""
 
-# 4.5 CUDA 12.6 + newer MSVC may reject the host compiler during whisper.cpp build.
+# 4.5 使用實際安裝的最新 CUDA，並同步 CMake/MSBuild 所需的路徑。
+$cudaBase = "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA"
+$cudaRoot = Get-ChildItem $cudaBase -Directory -ErrorAction SilentlyContinue |
+    Where-Object { Test-Path (Join-Path $_.FullName "bin\nvcc.exe") } |
+    Sort-Object { [version]$_.Name.TrimStart("v") } -Descending |
+    Select-Object -First 1 -ExpandProperty FullName
+
+if (-not $cudaRoot) {
+    throw "No CUDA toolkit with nvcc.exe was found under $cudaBase"
+}
+
+$cudaRoot = $cudaRoot.TrimEnd("\")
+$cudaRootWithSeparator = "$cudaRoot\"
+$cudaVersion = Split-Path $cudaRoot -Leaf
+$cudaVersionEnv = "CUDA_PATH_$($cudaVersion.ToUpperInvariant().Replace('.', '_'))"
+$env:CUDA_PATH = $cudaRootWithSeparator
+$env:CUDA_TOOLKIT_ROOT_DIR = $cudaRoot
+$env:CudaToolkitDir = $cudaRootWithSeparator
+$env:CMAKE_CUDA_COMPILER = Join-Path $cudaRoot "bin\nvcc.exe"
+Set-Item -Path "env:$cudaVersionEnv" -Value $cudaRootWithSeparator
+$env:PATH = "$(Join-Path $cudaRoot 'bin');$env:PATH"
+Write-Host "[4.5/6] CUDA Toolkit: $cudaRoot" -ForegroundColor Yellow
+
+if (-not $env:CMAKE_CUDA_ARCHITECTURES) {
+    $nvidiaSmi = Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue
+    if ($nvidiaSmi) {
+        $computeCapability = & $nvidiaSmi.Source --query-gpu=compute_cap --format=csv,noheader 2>$null |
+            Select-Object -First 1
+        if ($computeCapability -match '^\s*(\d+)\.(\d+)\s*$') {
+            $env:CMAKE_CUDA_ARCHITECTURES = "$($matches[1])$($matches[2])"
+        }
+    }
+}
+if ($env:CMAKE_CUDA_ARCHITECTURES) {
+    Write-Host "          CUDA 架構: $env:CMAKE_CUDA_ARCHITECTURES" -ForegroundColor Yellow
+}
+
+# Newer MSVC versions may require nvcc's host compiler override.
 $env:CMAKE_CUDA_FLAGS = (($env:CMAKE_CUDA_FLAGS, "-allow-unsupported-compiler") -join " ").Trim()
-Write-Host "[4.5/6] CUDA 編譯旗標: $env:CMAKE_CUDA_FLAGS" -ForegroundColor Yellow
+Write-Host "          CUDA 編譯旗標: $env:CMAKE_CUDA_FLAGS" -ForegroundColor Yellow
 Write-Host ""
 
 # 5. 開始建置
@@ -156,9 +213,9 @@ Write-Host ""
 $startTime = Get-Date
 
 if ($Release) {
-    cargo build --release
+    & $cargoPath build --release
 } else {
-    cargo build
+    & $cargoPath build
 }
 
 if ($LASTEXITCODE -ne 0) {

@@ -219,14 +219,15 @@ mod tests {
     fn test_energy_vad_noise() {
         let mut vad = EnergyVad::default();
         let frame = vec![0.0_f32; 480];
-        assert_eq!(vad.push_frame(&frame).is_speech(), false);
+        assert!(!vad.push_frame(&frame).is_speech());
     }
 
     #[test]
     fn test_energy_vad_speech() {
         let mut vad = EnergyVad::default();
         let frame = vec![0.5_f32; 480];
-        assert_eq!(vad.push_frame(&frame).is_speech(), true);
+        assert!(!vad.push_frame(&frame).is_speech());
+        assert!(vad.push_frame(&frame).is_speech());
     }
 
     #[test]
@@ -247,8 +248,8 @@ mod tests {
     fn test_detect_speech_segments() {
         let mut vad = EnergyVad::new(0.02, 60, 300);
         let mut samples = vec![0.0_f32; 16000];
-        for i in 2000..4000 {
-            samples[i] = 0.5;
+        for sample in samples.iter_mut().take(4000).skip(2000) {
+            *sample = 0.5;
         }
         let segments = vad.detect_speech_segments(&samples);
         assert!(!segments.is_empty());

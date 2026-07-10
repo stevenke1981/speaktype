@@ -5,6 +5,7 @@ pub mod engine;
 pub mod error;
 pub mod gui;
 pub mod history;
+pub mod icon;
 pub mod input;
 pub mod models;
 pub mod paths;
@@ -17,4 +18,3 @@ pub mod transcription;
 pub mod tray;
 pub mod utils;
 pub mod voice_commands;
-

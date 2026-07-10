@@ -10,4 +10,5 @@
 .DS_Store
 Thumbs.db
 .opencode/
+.codebase-memory/
 ${PROJECT_ROOT}/

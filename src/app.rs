@@ -965,7 +965,7 @@ impl eframe::App for SpeakTypeApp {
             ctx,
             &mut self.show_error_window,
             &self.error_log,
-            &log_file_path().unwrap_or(std::path::PathBuf::new()),
+            &log_file_path().unwrap_or_default(),
             &mut || {
                 error_clear_pending = true;
             },
