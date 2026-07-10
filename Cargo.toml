@@ -2,7 +2,7 @@
 
 [package]
 name = "speaktype"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 
 [lints.rust]
@@ -32,3 +32,10 @@ chrono = { version = "0.4", features = ["serde"] }
 hound = "3.5"
 ferrous-opencc = "0.4"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
+
+[profile.release]
+# 桌面應用以較小體積與穩定啟動時間為優先。
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
