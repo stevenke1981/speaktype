@@ -20,6 +20,7 @@ Section "SpeakType" SEC_APP
   SectionIn RO
   SetOutPath "$INSTDIR"
   File "${PROJECT_ROOT}\dist\release\speaktype.exe"
+  File "${PROJECT_ROOT}\dist\release\*.dll"
   File "${PROJECT_ROOT}\PACKAGING.md"
 
   CreateDirectory "$SMPROGRAMS\SpeakType"
@@ -46,6 +47,7 @@ Section "Uninstall"
   RMDir "$SMPROGRAMS\SpeakType"
 
   Delete "$INSTDIR\${APP_EXE}"
+  Delete "$INSTDIR\*.dll"
   Delete "$INSTDIR\PACKAGING.md"
   Delete "$INSTDIR\Uninstall.exe"
   RMDir "$INSTDIR"

@@ -5,6 +5,7 @@ param(
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $releaseExe = Join-Path $projectRoot "dist\release\speaktype.exe"
+$releaseDir = Split-Path -Parent $releaseExe
 $packageRoot = Join-Path $projectRoot "dist\packages"
 $staging = Join-Path $packageRoot "SpeakType-portable"
 $zipPath = Join-Path $packageRoot "SpeakType-portable.zip"
@@ -26,6 +27,11 @@ New-Item -ItemType Directory -Path $staging | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $staging "docs") | Out-Null
 
 Copy-Item $releaseExe -Destination (Join-Path $staging "speaktype.exe") -Force
+$runtimeDlls = Get-ChildItem $releaseDir -File -Filter "*.dll"
+if (-not $runtimeDlls) {
+    throw "Release runtime DLLs were not found under: $releaseDir"
+}
+$runtimeDlls | Copy-Item -Destination $staging -Force
 Copy-Item (Join-Path $projectRoot "PACKAGING.md") -Destination (Join-Path $staging "docs\PACKAGING.md") -Force
 
 @'

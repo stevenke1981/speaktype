@@ -51,6 +51,6 @@ Release options:
 - Portable ZIP: run `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\package-portable.ps1`
 - NSIS installer: install NSIS, then run `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-installer.ps1`
 
-The portable ZIP and installer include the app executable and docs only. They do not include model files, recordings, logs, or diagnostic bundles.
+The Release folder, portable ZIP, and installer include the app executable, the matching CUDA cuBLAS runtime DLLs, and docs. They do not include model files, recordings, logs, or diagnostic bundles. A compatible NVIDIA display driver is still required for CUDA inference.
 
 The installer creates Start Menu and Desktop shortcuts. The optional startup component writes `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\SpeakType` with `--tray`, so SpeakType launches directly into the system tray after Windows login.

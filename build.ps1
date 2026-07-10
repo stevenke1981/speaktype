@@ -41,6 +41,38 @@ if (-not $cargoPath) {
 $configuration = if ($Release) { "Release" } else { "Debug" }
 $buildType = if ($Release) { "--release" } else { "" }
 
+function Copy-CudaRuntimeLibraries {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$CudaRoot,
+        [Parameter(Mandatory = $true)]
+        [string]$Destination
+    )
+
+    $runtimeDir = @(
+        (Join-Path $CudaRoot "bin\x64"),
+        (Join-Path $CudaRoot "bin")
+    ) | Where-Object {
+        Test-Path (Join-Path $_ "cublas64_*.dll")
+    } | Select-Object -First 1
+
+    if (-not $runtimeDir) {
+        throw "CUDA cuBLAS runtime DLLs were not found under $CudaRoot"
+    }
+
+    $runtimeDlls = Get-ChildItem $runtimeDir -File | Where-Object {
+        $_.Name -match '^cublas(?:Lt)?64_\d+\.dll$'
+    }
+    if ($runtimeDlls.Count -lt 2) {
+        throw "Expected cublas and cublasLt runtime DLLs under $runtimeDir"
+    }
+
+    Get-ChildItem $Destination -File -Filter "cublas*64_*.dll" -ErrorAction SilentlyContinue |
+        Remove-Item -Force
+    $runtimeDlls | Copy-Item -Destination $Destination -Force
+    return $runtimeDlls
+}
+
 Write-Host "==============================================" -ForegroundColor Cyan
 Write-Host "  SpeakType 建置腳本 ($configuration 版本)" -ForegroundColor Cyan
 Write-Host "==============================================" -ForegroundColor Cyan
@@ -245,6 +277,8 @@ if ($Release) {
     $exePath = Join-Path $projectRoot "target\release\$exeName"
     Copy-Item $exePath -Destination (Join-Path $configOutDir $exeName) -Force
     Copy-Item $exePath -Destination (Join-Path $outDir $exeName) -Force
+    $cudaRuntimeDlls = Copy-CudaRuntimeLibraries -CudaRoot $cudaRoot -Destination $configOutDir
+    Copy-CudaRuntimeLibraries -CudaRoot $cudaRoot -Destination $outDir | Out-Null
     
     $fileInfo = Get-Item $exePath
     Write-Host "=== Release 版本資訊 ===" -ForegroundColor Cyan
@@ -252,6 +286,7 @@ if ($Release) {
     Write-Host "檔案大小: $([math]::Round($fileInfo.Length / 1MB, 2)) MB" -ForegroundColor White
     Write-Host "已複製到: $configOutDir\$exeName" -ForegroundColor Green
     Write-Host "Release 快捷副本: $outDir\$exeName" -ForegroundColor Green
+    Write-Host "CUDA 執行期: $($cudaRuntimeDlls.Name -join ', ')" -ForegroundColor Green
 } else {
     $exePath = Join-Path $projectRoot "target\debug\$exeName"
     Copy-Item $exePath -Destination (Join-Path $configOutDir $exeName) -Force
