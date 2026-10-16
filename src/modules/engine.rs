@@ -463,8 +463,7 @@ impl SpeakTypeEngine {
     pub fn model_status_text(&self) -> String {
         if self.model_ready {
             use crate::modules::transcription::transcriber as t;
-            let acceleration =
-                t::choose_backend(self.use_cuda, t::built_with_cuda(), t::nvidia_driver_present()).label();
+            let acceleration = t::current_backend(self.use_cuda).label();
             format!(
                 "{}：已準備 ({acceleration})",
                 self.model_path

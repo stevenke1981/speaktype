@@ -264,6 +264,7 @@ impl App {
                     cancel.store(true, Ordering::Relaxed);
                 }
             }
+            "download-cuda-libs" => self.download_cuda_libs(),
             "retry-model" | "reload-model" => {
                 self.reload_model_from_config();
                 self.push_main();
@@ -780,6 +781,51 @@ impl App {
             self.refresh_device_status();
             self.push_models();
         }
+    }
+
+    /// Run the bundled installer script (elevated if the install dir is not
+    /// writable) to fetch the CUDA runtime DLLs, then reload the model.
+    pub(super) fn download_cuda_libs(&mut self) {
+        let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_path_buf())) else {
+            return;
+        };
+        let script = dir.join("cuda-libs.ps1");
+        if !script.is_file() {
+            self.record_error(format!("找不到 {}，請重新安裝 CUDA 版", script.display()));
+            return;
+        }
+        self.transcription_status = "下載 CUDA 元件中（另開視窗顯示進度）...".to_string();
+        let writable = speaktype::modules::config::dir_is_writable(&dir);
+        std::thread::spawn(move || {
+            let inner = format!(
+                "-NoProfile -ExecutionPolicy Bypass -File \"{}\" -Dest \"{}\"",
+                script.display(),
+                dir.display()
+            );
+            let verb = if writable { "" } else { "-Verb RunAs " };
+            let cmd = format!(
+                "$p = Start-Process powershell {verb}-Wait -PassThru -ArgumentList '{}'; exit $p.ExitCode",
+                inner.replace('\'', "''")
+            );
+            let ok = std::process::Command::new("powershell")
+                .args(["-NoProfile", "-Command", &cmd])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            slint::invoke_from_event_loop(move || {
+                with_app(move |a| {
+                    if ok {
+                        a.transcription_status = "CUDA 元件已安裝".to_string();
+                    } else {
+                        a.record_error("CUDA 元件下載失敗，繼續使用 CPU。可稍後再試。".to_string());
+                    }
+                    a.reload_model_from_config();
+                    a.push_settings_misc();
+                    a.push_main();
+                })
+            })
+            .ok();
+        });
     }
 
     pub(super) fn transcription_watchdog(&mut self, job: u64, timeout: Duration) {

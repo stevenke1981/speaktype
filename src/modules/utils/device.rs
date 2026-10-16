@@ -53,22 +53,17 @@ fn detect_gpu(use_cuda: bool) -> String {
         return if use_cuda {
             "未偵測到 GPU；CUDA 可能無法使用".to_string()
         } else {
-            "未啟用 CUDA".to_string()
+            "已選擇 CPU".to_string()
         };
     };
 
     if !use_cuda {
-        return format!("{name}：已偵測（CUDA 未啟用）");
+        return format!("{name}：已偵測（已選擇 CPU）");
     }
 
-    if name.to_ascii_lowercase().contains("nvidia") {
-        if crate::modules::transcription::transcriber::built_with_cuda() {
-            format!("{name}：CUDA 可用")
-        } else {
-            format!("{name}：已偵測（此版本為 CPU 版，請改裝 CUDA 版以使用 GPU）")
-        }
-    } else {
-        format!("{name}：已偵測，但未確認 CUDA 支援")
+    match crate::modules::transcription::transcriber::gpu_runtime_status() {
+        Ok(backend) => format!("{name}：{} 可用", backend.label()),
+        Err(reason) => format!("{name}：{reason}"),
     }
 }
 

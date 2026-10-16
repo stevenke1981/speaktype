@@ -73,3 +73,5 @@ fn main() {
         );
     }
 }
+
+include!("../delay_hook.rs");
