@@ -133,9 +133,9 @@ Write-Host ""
 $startTime = Get-Date
 
 if ($Release) {
-    cargo build --release
+    cargo build --release --features cuda
 } else {
-    cargo build
+    cargo build --features cuda
 }
 
 if ($LASTEXITCODE -ne 0) {

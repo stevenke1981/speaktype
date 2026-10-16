@@ -1,72 +1,17 @@
-param(
-    [switch]$SkipBuild
-)
-
-$ErrorActionPreference = "Stop"
-$projectRoot = Split-Path -Parent $PSScriptRoot
-$releaseExe = Join-Path $projectRoot "dist\release\speaktype.exe"
-$releaseDir = Split-Path -Parent $releaseExe
-$packageRoot = Join-Path $projectRoot "dist\packages"
-$staging = Join-Path $packageRoot "SpeakType-portable"
-$zipPath = Join-Path $packageRoot "SpeakType-portable.zip"
-
-Set-Location $projectRoot
-
+# Builds dist\speaktype-windows-x64.zip (portable, no installer).
+param([switch]$SkipBuild)
+$ErrorActionPreference = 'Stop'
+$root = Split-Path -Parent $PSScriptRoot
+Set-Location $root
 if (-not $SkipBuild) {
-    & (Join-Path $projectRoot "build.ps1") -Release
+    cargo build --release --locked
+    if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
 }
-
-if (-not (Test-Path $releaseExe)) {
-    throw "Release executable not found: $releaseExe"
-}
-
-if (Test-Path $staging) {
-    Remove-Item -LiteralPath $staging -Recurse -Force
-}
-New-Item -ItemType Directory -Path $staging | Out-Null
-New-Item -ItemType Directory -Path (Join-Path $staging "docs") | Out-Null
-
-Copy-Item $releaseExe -Destination (Join-Path $staging "speaktype.exe") -Force
-$runtimeDlls = Get-ChildItem $releaseDir -File -Filter "*.dll"
-if (-not $runtimeDlls) {
-    throw "Release runtime DLLs were not found under: $releaseDir"
-}
-$runtimeDlls | Copy-Item -Destination $staging -Force
-Copy-Item (Join-Path $projectRoot "PACKAGING.md") -Destination (Join-Path $staging "docs\PACKAGING.md") -Force
-
-@'
-SpeakType Portable
-
-Run speaktype.exe to start the app.
-
-User data is stored under:
-%LOCALAPPDATA%\SpeakType\
-
-Folders:
-- config: app settings
-- models: downloaded Whisper models
-- recordings: saved WAV files
-- logs: runtime logs
-- diagnostics: exported debug bundles
-
-Recordings and models are not included in this portable package.
-'@ | Set-Content -Path (Join-Path $staging "README.txt") -Encoding ASCII
-
-@'
-param([switch]$Tray)
-$exe = Join-Path $PSScriptRoot "speaktype.exe"
-$value = "`"$exe`""
-if ($Tray) { $value += " --tray" }
-reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v SpeakType /t REG_SZ /d $value /f
-'@ | Set-Content -Path (Join-Path $staging "install-startup.ps1") -Encoding ASCII
-
-@'
-reg delete "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" /v SpeakType /f
-'@ | Set-Content -Path (Join-Path $staging "uninstall-startup.ps1") -Encoding ASCII
-
-if (Test-Path $zipPath) {
-    Remove-Item -LiteralPath $zipPath -Force
-}
-
-Compress-Archive -Path (Join-Path $staging "*") -DestinationPath $zipPath -Force
-Write-Host "Portable package created: $zipPath"
+$name = 'speaktype-windows-x64'
+$stage = Join-Path 'dist' $name
+Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $stage | Out-Null
+Copy-Item 'target\release\speaktype.exe', 'README.md', 'README.en.md' $stage
+Get-ChildItem 'target\release\*.dll' -ErrorAction SilentlyContinue | Copy-Item -Destination $stage
+Compress-Archive -Force -Path $stage -DestinationPath "dist\$name.zip"
+Get-Item "dist\$name.zip" | Format-List Name, Length
