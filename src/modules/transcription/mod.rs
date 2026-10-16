@@ -1,3 +1,3 @@
 pub mod transcriber;
 
-pub use transcriber::Transcriber;
+pub use transcriber::{TranscribeOptions, Transcriber};

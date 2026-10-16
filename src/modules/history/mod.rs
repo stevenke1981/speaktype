@@ -16,6 +16,15 @@ pub struct RecognitionRecord {
     pub text: String,
     pub scenario: String,
     pub duration_sec: f32,
+    /// Target application (process name), if known.
+    #[serde(default)]
+    pub app: Option<String>,
+    /// Hotkey release → text inserted, in milliseconds.
+    #[serde(default)]
+    pub latency_ms: Option<f64>,
+    /// Whisper output before cleanup.
+    #[serde(default)]
+    pub raw_text: Option<String>,
 }
 
 pub struct HistoryManager {
@@ -27,7 +36,7 @@ impl HistoryManager {
     pub fn new() -> Self {
         Self {
             records: Vec::new(),
-            max_records: 20,
+            max_records: 200,
         }
     }
 
@@ -60,13 +69,18 @@ impl HistoryManager {
     }
 
     pub fn add_record(&mut self, text: String, scenario: String, duration_sec: f32) {
-        let record = RecognitionRecord {
+        self.add_entry(RecognitionRecord {
             timestamp: Local::now(),
             text,
             scenario,
             duration_sec,
-        };
+            app: None,
+            latency_ms: None,
+            raw_text: None,
+        });
+    }
 
+    pub fn add_entry(&mut self, record: RecognitionRecord) {
         self.records.insert(0, record);
 
         // 超過上限就刪除最舊的
@@ -102,13 +116,18 @@ impl HistoryManager {
             }
         }
 
-        match serde_json::to_string_pretty(&self.records)
-            .map_err(|err| err.to_string())
-            .and_then(|content| fs::write(&path, content).map_err(|err| err.to_string()))
-        {
-            Ok(()) => {}
-            Err(err) => log_error("history save", format!("{}: {}", path.display(), err)),
-        }
+        // Serialise here, write on a background thread (keeps the UI responsive).
+        let content = match serde_json::to_string(&self.records) {
+            Ok(content) => content,
+            Err(err) => return log_error("history save", err),
+        };
+        std::thread::spawn(move || {
+            let tmp = path.with_extension("json.tmp");
+            let result = fs::write(&tmp, content).and_then(|_| fs::rename(&tmp, &path));
+            if let Err(err) = result {
+                log_error("history save", format!("{}: {}", path.display(), err));
+            }
+        });
     }
 }
 

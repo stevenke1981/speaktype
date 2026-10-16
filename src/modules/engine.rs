@@ -1,5 +1,11 @@
 use crate::modules::audio::{RecordedAudio, Recorder};
-use crate::modules::config::{OutputBufferMode, OutputConfig, TranscriptionMode};
+use crate::modules::ai_cleanup::{self, AiContext};
+use crate::modules::config::{
+    AiCleanupConfig, ChineseConversionMode, InjectionConfig, InjectionMethod, OutputBufferMode,
+    OutputConfig, TranscriptionConfig, TranscriptionMode,
+};
+use crate::modules::inject::{self, ForegroundApp, InjectPlan};
+use crate::modules::transcription::TranscribeOptions;
 use crate::modules::error::log_error;
 use crate::modules::input::InputController;
 use crate::modules::models;
@@ -55,6 +61,39 @@ pub struct TranscriptionRequest {
     pub scenario: Scenario,
     pub mode: TranscriptionMode,
     pub duration_sec: f32,
+    pub transcription: TranscriptionConfig,
+    pub injection: InjectionConfig,
+    pub ai: AiCleanupConfig,
+    /// Window focused when the hotkey was released (text goes there).
+    pub target_app: Option<ForegroundApp>,
+    /// When the user released the hotkey (latency is measured from here).
+    pub released_at: Instant,
+}
+
+/// Stage timings for one dictation, in milliseconds.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PipelineTimings {
+    pub queue_ms: f64,
+    pub asr_ms: f64,
+    pub cleanup_ms: f64,
+    pub ai_ms: f64,
+    pub inject_ms: f64,
+    /// Hotkey release → text handed to the target app.
+    pub total_ms: f64,
+}
+
+impl PipelineTimings {
+    pub fn summary(&self) -> String {
+        let mut s = format!(
+            "{:.0} ms（辨識 {:.0} / 整理 {:.0}",
+            self.total_ms, self.asr_ms, self.cleanup_ms
+        );
+        if self.ai_ms > 0.0 {
+            s.push_str(&format!(" / AI {:.0}", self.ai_ms));
+        }
+        s.push_str(&format!(" / 送出 {:.0}）", self.inject_ms));
+        s
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -63,6 +102,9 @@ pub struct TranscriptionResult {
     pub recording_path: PathBuf,
     pub duration_sec: f32,
     pub delivered: bool,
+    pub timings: PipelineTimings,
+    pub app: Option<String>,
+    pub raw_text: String,
 }
 
 #[derive(Debug)]
@@ -76,6 +118,7 @@ enum WorkerCommand {
         model_path: PathBuf,
         use_cuda: bool,
         cancel: Arc<AtomicBool>,
+        warm_up: bool,
     },
     Transcribe(TranscriptionRequest),
     Shutdown,
@@ -101,8 +144,12 @@ impl ModelWorker {
                         model_path,
                         use_cuda,
                         cancel,
+                        warm_up,
                     } => match load_worker_model(&model_path, use_cuda, cancel, &event_tx) {
                         Ok(loaded) => {
+                            if warm_up {
+                                loaded.warm_up();
+                            }
                             transcriber = Some(loaded);
                             loaded_model = Some((model_path, use_cuda));
                             let _ = event_tx.send(WorkerEvent::Model(ModelEvent::Ready));
@@ -175,12 +222,14 @@ impl ModelWorker {
         model_path: PathBuf,
         use_cuda: bool,
         cancel: Arc<AtomicBool>,
+        warm_up: bool,
     ) -> Result<(), String> {
         self.commands
             .send(WorkerCommand::LoadModel {
                 model_path,
                 use_cuda,
                 cancel,
+                warm_up,
             })
             .map_err(|err| err.to_string())
     }
@@ -208,7 +257,6 @@ pub struct SpeakTypeEngine {
     use_cuda: bool,
     model_ready: bool,
     model_error: Option<String>,
-    input: InputController,
     recording: bool,
     recording_start: Option<Instant>,
     last_recording_path: Option<PathBuf>,
@@ -230,7 +278,6 @@ impl SpeakTypeEngine {
             use_cuda,
             model_ready,
             model_error,
-            input: InputController::new(),
             recording: false,
             recording_start: None,
             last_recording_path: None,
@@ -252,6 +299,15 @@ impl SpeakTypeEngine {
     pub fn update_audio_config(&mut self, input_device_name: Option<String>, gain: f32) {
         self.recorder.set_input_device_name(input_device_name);
         self.recorder.set_gain(gain);
+    }
+
+    /// Keep the microphone stream open between dictations.
+    pub fn set_keep_mic_warm(&mut self, keep_warm: bool) {
+        self.recorder.set_keep_warm(keep_warm);
+    }
+
+    pub fn mic_is_warm(&self) -> bool {
+        self.recorder.is_warm()
     }
 
     pub fn input_devices(&self) -> Vec<String> {
@@ -305,6 +361,7 @@ impl SpeakTypeEngine {
             return Err("目前沒有正在錄音".to_string());
         }
 
+        let released_at = Instant::now();
         self.recording = false;
         let duration = self
             .recording_start
@@ -335,6 +392,11 @@ impl SpeakTypeEngine {
             scenario,
             mode,
             duration_sec: duration,
+            transcription: TranscriptionConfig::default(),
+            injection: InjectionConfig::default(),
+            ai: AiCleanupConfig::default(),
+            target_app: inject::foreground_app(),
+            released_at,
         })
     }
 
@@ -384,37 +446,13 @@ impl SpeakTypeEngine {
         self.last_recording_duration_sec
     }
 
-    pub fn deliver_text_now(&mut self, text: &str, output: &OutputConfig) -> Result<(), String> {
-        deliver_text_with_controller(&mut self.input, text, output)
-    }
-}
-
-pub fn prepare_model_with_progress(
-    model_path: &Path,
-    use_cuda: bool,
-    cancel: Arc<AtomicBool>,
-    on_event: impl FnMut(ModelEvent),
-) {
-    let on_event = std::cell::RefCell::new(on_event);
-    let emit = |event| {
-        on_event.borrow_mut()(event);
-    };
-    match ensure_model_file(model_path, cancel, |progress| {
-        emit(ModelEvent::Progress(progress));
-    }, |warning| {
-        emit(ModelEvent::Warning(warning));
-    })
-    .and_then(|_| {
-        Transcriber::new(model_path, use_cuda)
-            .map(|_| ())
-            .map_err(|err| format!("模型載入失敗: {}", err))
-    }) {
-        Ok(()) => emit(ModelEvent::Ready),
-        Err(err) if err == "cancelled" => emit(ModelEvent::Cancelled),
-        Err(err) => {
-            log_error("model prepare", &err);
-            emit(ModelEvent::Failed(err));
-        }
+    pub fn deliver_text_now(
+        &mut self,
+        text: &str,
+        output: &OutputConfig,
+        injection: &InjectionConfig,
+    ) -> Result<(), String> {
+        deliver_text(text, output, injection, None)
     }
 }
 
@@ -466,32 +504,65 @@ pub fn load_recording_wav(path: &Path) -> Result<RecordedAudio, String> {
     })
 }
 
+/// Prompt that nudges whisper towards Traditional Chinese and the user's terms.
+pub fn build_initial_prompt(transcription: &TranscriptionConfig, output: &OutputConfig) -> String {
+    let lang = transcription.language.trim().to_ascii_lowercase();
+    let chinese = lang.is_empty() || lang == "auto" || lang.starts_with("zh");
+    let mut prompt = String::new();
+    if transcription.prefer_traditional_prompt
+        && chinese
+        && output.chinese_conversion != ChineseConversionMode::SimplifiedChina
+    {
+        prompt.push_str("以下是繁體中文的語音輸入，可能夾雜 English。");
+    }
+    let terms: Vec<&str> = output
+        .vocabulary
+        .entries
+        .iter()
+        .filter(|e| !e.is_blank())
+        .map(|e| {
+            let r = e.replacement.trim();
+            if r.is_empty() { e.source.trim() } else { r }
+        })
+        .take(40)
+        .collect();
+    if !terms.is_empty() {
+        prompt.push_str("常用詞：");
+        prompt.push_str(&terms.join("、"));
+        prompt.push('。');
+    }
+    prompt
+}
+
 fn run_transcription_with_transcriber(
     transcriber: &Transcriber,
     request: TranscriptionRequest,
     mut on_event: impl FnMut(TranscriptionEvent),
 ) {
-    on_event(TranscriptionEvent::Status("儲存錄音檔...".to_string()));
-
-    let recording_path = match save_recording_wav(&request.audio) {
-        Ok(path) => path,
-        Err(err) => {
-            log_error("recording save", &err);
-            on_event(TranscriptionEvent::Failed(err));
-            return;
-        }
-    };
+    let queue_ms = request.released_at.elapsed().as_secs_f64() * 1000.0;
+    let recording_path = paths::recordings_dir().join(format!(
+        "recording_{}.wav",
+        Local::now().format("%Y%m%d_%H%M%S_%3f")
+    ));
 
     if request.mode == TranscriptionMode::Fast {
-        on_event(TranscriptionEvent::Status(
-            "快速模式：產生草稿中...".to_string(),
-        ));
         on_event(TranscriptionEvent::Draft("轉錄草稿產生中...".to_string()));
     }
 
     on_event(TranscriptionEvent::Status("轉錄中...".to_string()));
-    let whisper_audio = request.audio.to_whisper_mono_16khz();
-    let text = match transcriber.transcribe(&whisper_audio) {
+    let asr_start = Instant::now();
+    let whisper_audio = if request.audio.sample_rate == 16_000 && request.audio.channels == 1 {
+        std::borrow::Cow::Borrowed(&request.audio.samples)
+    } else {
+        std::borrow::Cow::Owned(request.audio.to_whisper_mono_16khz())
+    };
+    let options = TranscribeOptions {
+        language: request.transcription.language.clone(),
+        initial_prompt: build_initial_prompt(&request.transcription, &request.output),
+        fast_encoder: request.transcription.fast_encoder,
+        threads: request.transcription.threads,
+    };
+    let text = match transcriber.transcribe_with(&whisper_audio, &options) {
         Ok(text) => text,
         Err(err) => {
             let error = format!("轉錄失敗: {}", err);
@@ -500,34 +571,62 @@ fn run_transcription_with_transcriber(
             return;
         }
     };
+    let asr_ms = asr_start.elapsed().as_secs_f64() * 1000.0;
 
-    finish_transcription_text(request, recording_path, text, on_event);
+    // The WAV is written after the text is delivered, off the critical path.
+    let audio_for_save = request.audio.clone();
+    let save_path = recording_path.clone();
+    let timings = PipelineTimings { queue_ms, asr_ms, ..Default::default() };
+    finish_transcription_text(request, recording_path, text, timings, on_event);
+    std::thread::spawn(move || {
+        if let Err(err) = save_recording_wav_to(&audio_for_save, &save_path) {
+            log_error("recording save", err);
+        }
+    });
+}
+
+/// Pick the scenario from the per-app rule, if any.
+pub fn scenario_for_app(injection: &InjectionConfig, app: Option<&ForegroundApp>, fallback: Scenario) -> Scenario {
+    injection
+        .rule_for(app.and_then(|a| a.process.as_deref()))
+        .and_then(|rule| rule.scenario.as_deref())
+        .and_then(Scenario::from_name)
+        .unwrap_or(fallback)
 }
 
 fn finish_transcription_text(
     request: TranscriptionRequest,
     recording_path: PathBuf,
     text: String,
+    mut timings: PipelineTimings,
     mut on_event: impl FnMut(TranscriptionEvent),
 ) {
-    let text = normalize_transcription_text(&text);
+    let raw_text = normalize_transcription_text(&text);
+    let text = raw_text.clone();
+    let app_name = request.target_app.as_ref().and_then(|a| a.process.clone());
 
     if request.output.voice_commands_enabled {
         if let Some(command) = parse_voice_command(&text) {
             on_event(TranscriptionEvent::Status("執行語音指令...".to_string()));
             let mut input = InputController::new();
             execute_voice_command(&command, input.enigo());
+            timings.total_ms = request.released_at.elapsed().as_secs_f64() * 1000.0;
             on_event(TranscriptionEvent::Completed(TranscriptionResult {
                 text: format!("[指令] {}", voice_command_label(&command)),
                 recording_path,
                 duration_sec: request.duration_sec,
                 delivered: true,
+                timings,
+                app: app_name,
+                raw_text,
             }));
             return;
         }
     }
 
-    let text = match postprocess_transcription(&text, request.scenario, &request.output) {
+    let scenario = scenario_for_app(&request.injection, request.target_app.as_ref(), request.scenario);
+    let cleanup_start = Instant::now();
+    let mut text = match postprocess_transcription(&text, scenario, &request.output) {
         Ok(text) => text,
         Err(err) => {
             let error = format!("文字後處理失敗: {}", err);
@@ -536,9 +635,41 @@ fn finish_transcription_text(
             return;
         }
     };
+    timings.cleanup_ms = cleanup_start.elapsed().as_secs_f64() * 1000.0;
+
+    if request.ai.enabled && !text.is_empty() {
+        on_event(TranscriptionEvent::Status("AI 潤稿中...".to_string()));
+        let ai_start = Instant::now();
+        let rule = request
+            .injection
+            .rule_for(request.target_app.as_ref().and_then(|a| a.process.as_deref()));
+        let dictionary: Vec<String> = request
+            .output
+            .vocabulary
+            .entries
+            .iter()
+            .filter(|e| !e.is_blank())
+            .map(|e| if e.replacement.trim().is_empty() { e.source.trim().to_string() } else { e.replacement.trim().to_string() })
+            .collect();
+        let ctx = AiContext {
+            scenario: scenario.name(),
+            app: app_name.as_deref(),
+            tone: rule.map(|r| r.tone.as_str()).unwrap_or(""),
+            dictionary: &dictionary,
+            traditional_chinese: request.output.chinese_conversion != ChineseConversionMode::SimplifiedChina,
+        };
+        match ai_cleanup::rewrite(&request.ai, &ctx, &text) {
+            Ok(rewritten) => {
+                // keep the script consistent (LLMs sometimes drift to Simplified)
+                text = postprocess_transcription(&rewritten, scenario, &request.output).unwrap_or(rewritten);
+            }
+            Err(err) => log_error("ai cleanup", err),
+        }
+        timings.ai_ms = ai_start.elapsed().as_secs_f64() * 1000.0;
+    }
 
     if text.is_empty() {
-        on_event(TranscriptionEvent::Failed("辨識結果為空".to_string()));
+        on_event(TranscriptionEvent::Failed("沒有辨識到語音".to_string()));
         return;
     }
 
@@ -546,9 +677,12 @@ fn finish_transcription_text(
         false
     } else {
         on_event(TranscriptionEvent::Status("輸出文字...".to_string()));
-        let mut input = InputController::new();
-        match deliver_text_with_controller(&mut input, &text, &request.output) {
-            Ok(()) => true,
+        let inject_start = Instant::now();
+        match deliver_text(&text, &request.output, &request.injection, request.target_app.as_ref()) {
+            Ok(()) => {
+                timings.inject_ms = inject_start.elapsed().as_secs_f64() * 1000.0;
+                true
+            }
             Err(err) => {
                 log_error("text delivery", &err);
                 on_event(TranscriptionEvent::Failed(err));
@@ -556,64 +690,62 @@ fn finish_transcription_text(
             }
         }
     };
+    timings.total_ms = request.released_at.elapsed().as_secs_f64() * 1000.0;
 
     on_event(TranscriptionEvent::Completed(TranscriptionResult {
         text,
         recording_path,
         duration_sec: request.duration_sec,
         delivered,
+        timings,
+        app: app_name,
+        raw_text,
     }));
 }
 
-fn deliver_text_with_controller(
-    input: &mut InputController,
+/// Deliver `text` according to the output mode and per-app injection rules.
+pub fn deliver_text(
     text: &str,
     output: &OutputConfig,
+    injection: &InjectionConfig,
+    target: Option<&ForegroundApp>,
 ) -> Result<(), String> {
-    match output.buffer_mode {
-        OutputBufferMode::Clipboard => {
-            if output.auto_inject_focused_window {
-                input.inject_via_clipboard(text, false)
-            } else {
-                input.copy_to_clipboard(text)
-            }
-        }
-        OutputBufferMode::Temporary => {
-            if output.auto_inject_focused_window {
-                input.inject_via_clipboard(text, output.restore_clipboard_after_inject)
-            } else {
-                Ok(())
-            }
+    let restore = output.buffer_mode == OutputBufferMode::Temporary && output.restore_clipboard_after_inject;
+    let mut plan = InjectPlan::resolve(injection, target, restore);
+    if !output.auto_inject_focused_window {
+        if output.buffer_mode == OutputBufferMode::Clipboard {
+            plan.method = InjectionMethod::ClipboardOnly;
+        } else {
+            return Ok(());
         }
     }
-    .map_err(|e| format!("文字輸出失敗: {}", e))
+    inject::inject(text, &plan, target).map_err(|e| format!("文字輸出失敗: {}", e))
 }
 
-fn save_recording_wav(audio: &RecordedAudio) -> Result<PathBuf, String> {
-    let recordings_dir = paths::recordings_dir();
-    fs::create_dir_all(&recordings_dir).map_err(|err| err.to_string())?;
-
-    let file_name = format!("recording_{}.wav", Local::now().format("%Y%m%d_%H%M%S_%3f"));
-    let path = recordings_dir.join(file_name);
+/// Save as 16-bit PCM (half the size of the old 32-bit float files).
+pub fn save_recording_wav_to(audio: &RecordedAudio, path: &Path) -> Result<(), String> {
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).map_err(|err| err.to_string())?;
+    }
     let spec = hound::WavSpec {
         channels: audio.channels.max(1),
         sample_rate: audio.sample_rate.max(1),
-        bits_per_sample: 32,
-        sample_format: hound::SampleFormat::Float,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
     };
 
-    let mut writer = hound::WavWriter::create(&path, spec)
+    let mut writer = hound::WavWriter::create(path, spec)
         .map_err(|err| format!("無法建立錄音檔 {}: {}", path.display(), err))?;
     for sample in &audio.samples {
         writer
-            .write_sample(sample.clamp(-1.0, 1.0))
+            .write_sample((sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)
             .map_err(|err| format!("寫入錄音檔失敗: {}", err))?;
     }
     writer
         .finalize()
         .map_err(|err| format!("完成錄音檔失敗: {}", err))?;
 
-    Ok(path)
+    Ok(())
 }
 
 fn normalize_transcription_text(text: &str) -> String {
@@ -768,6 +900,9 @@ mod tests {
             recording_path: PathBuf::from("/tmp/test.wav"),
             duration_sec: 2.5,
             delivered: true,
+            timings: PipelineTimings::default(),
+            app: None,
+            raw_text: "hello world".into(),
         };
         assert_eq!(result.text, "hello world");
         assert!(result.delivered);
@@ -788,6 +923,11 @@ mod tests {
             scenario: Scenario::Chat,
             mode: TranscriptionMode::Stable,
             duration_sec: 1.0,
+            transcription: TranscriptionConfig::default(),
+            injection: InjectionConfig::default(),
+            ai: AiCleanupConfig::default(),
+            target_app: None,
+            released_at: Instant::now(),
         };
         assert_eq!(request.audio.sample_rate, 16000);
         assert_eq!(request.audio.samples.len(), 16000);

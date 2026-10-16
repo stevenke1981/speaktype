@@ -130,8 +130,10 @@ fn font_candidates_for_platform() -> &'static [&'static str] {
     #[cfg(target_os = "windows")]
     {
         &[
-            r"C:\Windows\Fonts\NotoSansTC-VF.ttf",
+            // Microsoft JhengHei first: static (non-variable) font that ships
+            // with every zh-TW / en Windows install and renders crisply in egui.
             r"C:\Windows\Fonts\msjh.ttc",
+            r"C:\Windows\Fonts\NotoSansTC-VF.ttf",
             r"C:\Windows\Fonts\mingliu.ttc",
             r"C:\Windows\Fonts\simhei.ttf",
             r"C:\Windows\Fonts\simsun.ttc",

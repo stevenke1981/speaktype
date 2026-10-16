@@ -10,6 +10,7 @@ pub fn draw_history_window(
     ctx: &egui::Context,
     open: &mut bool,
     history: &HistoryManager,
+    filter: &mut String,
     on_clear: &mut dyn FnMut(),
 ) {
     egui::Window::new("辨識紀錄")
@@ -33,10 +34,19 @@ pub fn draw_history_window(
                 ui.separator();
             }
 
+            ui.horizontal(|ui| {
+                ui.label("搜尋");
+                ui.add(egui::TextEdit::singleline(filter).desired_width(240.0));
+            });
+            let needle = filter.trim().to_lowercase();
             egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    for record in history.records() {
+                    for record in history.records().iter().filter(|r| {
+                        needle.is_empty()
+                            || r.text.to_lowercase().contains(&needle)
+                            || r.app.as_deref().unwrap_or("").to_lowercase().contains(&needle)
+                    }) {
                         card_frame(ui).show(ui, |ui| {
                             ui.horizontal(|ui| {
                                 ui.label(
@@ -51,9 +61,23 @@ pub fn draw_history_window(
                                         .size(11.0)
                                         .color(accent_color()),
                                 );
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if let Some(app) = &record.app {
                                     ui.label(
-                                        egui::RichText::new(format!("{:.1} 秒", record.duration_sec))
+                                        egui::RichText::new(app)
+                                            .size(11.0)
+                                            .color(text_secondary()),
+                                    );
+                                }
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if ui.small_button("複製").clicked() {
+                                        ui.ctx().output_mut(|o| o.copied_text = record.text.clone());
+                                    }
+                                    let mut meta = format!("{:.1} 秒", record.duration_sec);
+                                    if let Some(ms) = record.latency_ms {
+                                        meta.push_str(&format!(" · 延遲 {ms:.0} ms"));
+                                    }
+                                    ui.label(
+                                        egui::RichText::new(meta)
                                             .size(11.0)
                                             .color(text_secondary()),
                                     );

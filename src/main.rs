@@ -8,13 +8,25 @@ use speaktype::modules::error::{install_panic_hook, log_error};
 use speaktype::modules::icon::load_app_icon;
 
 fn main() {
+    let startup_started = std::time::Instant::now();
     install_panic_hook();
+    let args: Vec<String> = std::env::args().collect();
+    // `--startup-probe <file>`: write time-to-first-frame (ms) to <file> and exit.
+    let startup_probe = args
+        .iter()
+        .position(|a| a == "--startup-probe")
+        .and_then(|i| args.get(i + 1))
+        .map(std::path::PathBuf::from);
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("SpeakType {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
 
     let Some(_single_instance) = SingleInstanceGuard::try_acquire() else {
         return;
     };
 
-    let start_hidden_to_tray = std::env::args().any(|arg| arg == "--tray");
+    let start_hidden_to_tray = args.iter().any(|arg| arg == "--tray");
     let viewport = egui::ViewportBuilder::default()
         .with_inner_size([560.0, 560.0])
         .with_title("SpeakType");
@@ -33,7 +45,12 @@ fn main() {
     if let Err(err) = eframe::run_native(
         "SpeakType",
         options,
-        Box::new(move |cc| Box::new(SpeakTypeApp::new(&cc.egui_ctx, start_hidden_to_tray))),
+        Box::new(move |cc| Box::new(SpeakTypeApp::new(
+            &cc.egui_ctx,
+            start_hidden_to_tray,
+            startup_started,
+            startup_probe,
+        ))),
     ) {
         log_error("app startup", err);
     }

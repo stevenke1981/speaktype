@@ -26,6 +26,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub struct SpeakTypeApp {
+    history_filter: String,
+    last_latency: Option<speaktype::modules::engine::PipelineTimings>,
+    startup_started: Instant,
+    startup_probe: Option<PathBuf>,
+    startup_reported: bool,
     recording: bool,
     last_result: String,
     last_error: Option<String>,
@@ -70,7 +75,13 @@ pub struct SpeakTypeApp {
 }
 
 impl SpeakTypeApp {
-    pub fn new(ctx: &egui::Context, start_hidden_to_tray: bool) -> Self {
+    pub fn new(
+        ctx: &egui::Context,
+        start_hidden_to_tray: bool,
+        startup_started: Instant,
+        startup_probe: Option<PathBuf>,
+    ) -> Self {
+        speaktype::modules::utils::device::prefetch_gpu_name();
         gui::configure_cjk_fonts(ctx);
         theme::init_theme(ctx, theme::SpeakTypeTheme::QuietLuxury);
 
@@ -96,6 +107,11 @@ impl SpeakTypeApp {
         }
 
         let mut app = Self {
+            history_filter: String::new(),
+            last_latency: None,
+            startup_started,
+            startup_probe,
+            startup_reported: false,
             recording: false,
             last_result: String::new(),
             last_error,
@@ -138,6 +154,13 @@ impl SpeakTypeApp {
             pending_download_confirm: None,
             model_download_name: None,
         };
+        {
+            // Wake the UI immediately on hotkey edges instead of waiting for the
+            // next timed repaint (was up to 500 ms while minimised to tray).
+            let ctx = ctx.clone();
+            app.hotkey.set_waker(move || ctx.request_repaint());
+        }
+        app.engine.set_keep_mic_warm(app.config.recording.keep_mic_warm);
         let record_toggle = app.config.hotkeys.record_toggle.clone();
         if let Err(err) = app.hotkey.update_hotkey(&record_toggle) {
             app.record_error(format!("快捷鍵設定無效，已使用預設值: {}", err));
@@ -221,11 +244,16 @@ impl SpeakTypeApp {
         self.recording_start = None;
         self.engine
             .set_last_recording_path(result.recording_path.clone());
-        self.history.add_record(
-            result.text.clone(),
-            self.scenario_manager.current().name().to_string(),
-            result.duration_sec,
-        );
+        self.last_latency = Some(result.timings.clone());
+        self.history.add_entry(speaktype::modules::history::RecognitionRecord {
+            timestamp: chrono::Local::now(),
+            text: result.text.clone(),
+            scenario: self.scenario_manager.current().name().to_string(),
+            duration_sec: result.duration_sec,
+            app: result.app.clone(),
+            latency_ms: Some(result.timings.total_ms),
+            raw_text: Some(result.raw_text.clone()),
+        });
         if result.delivered {
             self.transcription_status = "已完成".to_string();
             self.pending_preview = None;
@@ -305,7 +333,7 @@ impl SpeakTypeApp {
         };
         self.model_download = None;
         self.model_cancel = Some(cancel.clone());
-        if let Err(err) = self.model_worker.load_model(model_path, use_cuda, cancel) {
+        if let Err(err) = self.model_worker.load_model(model_path, use_cuda, cancel, self.config.transcription.warm_up) {
             self.record_error(format!("模型 worker 啟動失敗: {err}"));
         }
     }
@@ -316,6 +344,9 @@ impl SpeakTypeApp {
         request.model_path = self.config.get_model_path();
         request.use_cuda = self.config.use_cuda;
         request.mode = self.config.recording.transcription_mode;
+        request.transcription = self.config.transcription.clone();
+        request.injection = self.config.injection.clone();
+        request.ai = self.config.ai_cleanup.clone();
 
         let retry_request = request.clone();
         self.transcription_busy = true;
@@ -335,7 +366,9 @@ impl SpeakTypeApp {
         if self.transcription_busy {
             return;
         }
-        if let Some(request) = self.pending_retry.clone() {
+        if let Some(mut request) = self.pending_retry.clone() {
+            request.released_at = Instant::now();
+            request.target_app = None;
             self.start_transcription_job(request);
         }
     }
@@ -360,6 +393,11 @@ impl SpeakTypeApp {
                     scenario: self.scenario_manager.current(),
                     mode: self.config.recording.transcription_mode,
                     duration_sec,
+                    transcription: self.config.transcription.clone(),
+                    injection: self.config.injection.clone(),
+                    ai: self.config.ai_cleanup.clone(),
+                    target_app: None,
+                    released_at: Instant::now(),
                 };
                 self.selected_recording_for_retry = Some(path);
                 self.start_transcription_job(request);
@@ -375,7 +413,7 @@ impl SpeakTypeApp {
 
         let mut output = self.config.output.clone();
         output.auto_inject_focused_window = true;
-        match self.engine.deliver_text_now(&text, &output) {
+        match self.engine.deliver_text_now(&text, &output, &self.config.injection) {
             Ok(()) => {
                 self.pending_preview = None;
                 self.transcription_status = "已送出".to_string();
@@ -407,6 +445,64 @@ impl SpeakTypeApp {
         if let Some(monitor) = &self.level_monitor {
             self.input_level = monitor.level();
         }
+    }
+
+    /// Minimal floating pill shown at the bottom of the screen while recording
+    /// or transcribing (Typeless-style). Click-through, always on top.
+    fn draw_recording_indicator(&mut self, ctx: &egui::Context) {
+        if !self.config.indicator.enabled || !(self.recording || self.transcription_busy) {
+            return;
+        }
+        let size = egui::vec2(168.0, 34.0);
+        let monitor = ctx.input(|i| i.viewport().monitor_size).unwrap_or(egui::vec2(1920.0, 1080.0));
+        let pos = egui::pos2((monitor.x - size.x) / 2.0, monitor.y - size.y - 72.0);
+        let recording = self.recording;
+        let elapsed = self.recording_start.map(|t| t.elapsed().as_secs_f32()).unwrap_or(0.0);
+        let level = self.input_level;
+        ctx.show_viewport_immediate(
+            egui::ViewportId::from_hash_of("speaktype-indicator"),
+            egui::ViewportBuilder::default()
+                .with_title("SpeakType indicator")
+                .with_inner_size(size)
+                .with_position(pos)
+                .with_decorations(false)
+                .with_resizable(false)
+                .with_transparent(true)
+                .with_always_on_top()
+                .with_taskbar(false)
+                .with_mouse_passthrough(true)
+                .with_active(false),
+            |ctx, _class| {
+                egui::CentralPanel::default()
+                    .frame(egui::Frame::none())
+                    .show(ctx, |ui| {
+                        let rect = ui.max_rect();
+                        let painter = ui.painter();
+                        painter.rect_filled(rect, 17.0, egui::Color32::from_rgba_unmultiplied(20, 20, 24, 230));
+                        let t = ui.input(|i| i.time) as f32;
+                        if recording {
+                            let pulse = 0.6 + 0.4 * (t * 6.0).sin().abs();
+                            painter.circle_filled(rect.left_center() + egui::vec2(18.0, 0.0), 6.0 * pulse.max(level.min(1.0) + 0.5).min(1.2), egui::Color32::from_rgb(235, 64, 64));
+                            for i in 0..12 {
+                                let h = 4.0 + 14.0 * ((t * 7.0 + i as f32 * 0.7).sin().abs() * (0.3 + level.min(1.0)));
+                                let x = rect.left() + 36.0 + i as f32 * 6.0;
+                                painter.line_segment(
+                                    [egui::pos2(x, rect.center().y - h / 2.0), egui::pos2(x, rect.center().y + h / 2.0)],
+                                    egui::Stroke::new(3.0_f32, egui::Color32::from_gray(220)),
+                                );
+                            }
+                            painter.text(rect.right_center() - egui::vec2(14.0, 0.0), egui::Align2::RIGHT_CENTER, format!("{elapsed:.1}s"), egui::FontId::proportional(13.0), egui::Color32::from_gray(230));
+                        } else {
+                            for i in 0..3 {
+                                let a = ((t * 4.0 - i as f32 * 0.6).sin() * 0.5 + 0.5) * 255.0;
+                                painter.circle_filled(rect.left_center() + egui::vec2(22.0 + i as f32 * 12.0, 0.0), 4.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, a as u8));
+                            }
+                            painter.text(rect.right_center() - egui::vec2(14.0, 0.0), egui::Align2::RIGHT_CENTER, "轉寫中", egui::FontId::proportional(13.0), egui::Color32::from_gray(230));
+                        }
+                    });
+                ctx.request_repaint_after(Duration::from_millis(33));
+            },
+        );
     }
 
     fn minimize_to_tray(&mut self, ctx: &egui::Context) {
@@ -634,14 +730,32 @@ impl eframe::App for SpeakTypeApp {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
 
-        if self.config.hotkeys.global_hotkey_enabled
-            && self.config.hotkeys.hold_to_record
-            && !self.hotkey_capture
-        {
-            match self.hotkey.poll_record_hotkey_event() {
-                Some(HotkeyEvent::Pressed) => self.start_ptt_recording(),
-                Some(HotkeyEvent::Released) => self.finish_ptt_recording(),
-                None => {}
+        if self.config.hotkeys.global_hotkey_enabled && !self.hotkey_capture {
+            while let Some(event) = self.hotkey.poll_record_hotkey_event() {
+                match (self.config.hotkeys.hold_to_record, event) {
+                    (true, HotkeyEvent::Pressed) => self.start_ptt_recording(),
+                    (true, HotkeyEvent::Released) => self.finish_ptt_recording(),
+                    // toggle mode: press to start, press again to stop
+                    (false, HotkeyEvent::Pressed) => self.toggle_recording_action(),
+                    (false, HotkeyEvent::Released) => {}
+                }
+            }
+        }
+        if self.device_status.gpu == "偵測中…" {
+            self.refresh_device_status();
+            ctx.request_repaint_after(Duration::from_millis(300));
+        }
+        self.draw_recording_indicator(ctx);
+        if !self.startup_reported {
+            self.startup_reported = true;
+            let ms = self.startup_started.elapsed().as_secs_f64() * 1000.0;
+            log_error("startup", format!("time to first frame: {ms:.0} ms"));
+            if let Some(path) = self.startup_probe.clone() {
+                let _ = std::fs::write(&path, format!("{ms:.0}\n"));
+                if std::env::var_os("SPEAKTYPE_PROBE_KEEP_OPEN").is_none() {
+                    self.exit_requested = true;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
             }
         }
 
@@ -950,6 +1064,7 @@ impl eframe::App for SpeakTypeApp {
             ctx,
             &mut self.show_history_window,
             &self.history,
+            &mut self.history_filter,
             &mut || {
                 history_clear_pending = true;
             },
@@ -1311,6 +1426,8 @@ impl SpeakTypeApp {
                             });
                             ui.add_space(theme::SPACE_SM);
 
+                            should_save |= self.draw_speed_and_ai_settings(ui);
+
                             // ===== 系統設定 =====
                             ui.add_space(theme::SPACE_MD);
                             ui.label(
@@ -1513,6 +1630,176 @@ impl SpeakTypeApp {
         if should_reload_model {
             self.reload_model_from_config();
         }
+    }
+
+    /// Settings added in v0.4: language/speed, text sending, per-app rules, AI cleanup, indicator.
+    fn draw_speed_and_ai_settings(&mut self, ui: &mut egui::Ui) -> bool {
+        use speaktype::modules::config::{AppRule, InjectionMethod};
+        let mut changed = false;
+        ui.add_space(theme::SPACE_MD);
+        ui.label(egui::RichText::new("速度、送出與 AI").size(14.0).color(theme::text_primary()));
+        ui.add_space(theme::SPACE_SM);
+
+        theme::section_frame(ui).show(ui, |ui| {
+            ui.label(egui::RichText::new("辨識").size(13.0).color(theme::text_primary()));
+            ui.horizontal(|ui| {
+                ui.label("語言");
+                let languages = [("auto", "自動（中英夾雜）"), ("zh", "中文"), ("en", "English"), ("ja", "日本語"), ("ko", "한국어")];
+                let current = languages
+                    .iter()
+                    .find(|(code, _)| *code == self.config.transcription.language)
+                    .map(|(_, label)| *label)
+                    .unwrap_or("自訂");
+                egui::ComboBox::from_id_source("lang_combo").selected_text(current).show_ui(ui, |ui| {
+                    for (code, label) in languages {
+                        changed |= ui.selectable_value(&mut self.config.transcription.language, code.to_string(), label).changed();
+                    }
+                });
+            });
+            changed |= ui.checkbox(&mut self.config.transcription.fast_encoder, "短句加速（依錄音長度縮短運算視窗）").changed();
+            changed |= ui.checkbox(&mut self.config.transcription.prefer_traditional_prompt, "引導輸出繁體中文").changed();
+            if ui.checkbox(&mut self.config.recording.keep_mic_warm, "麥克風常駐（按下即錄、保留 0.3 秒預錄；Windows 會持續顯示麥克風使用中）").changed() {
+                self.engine.set_keep_mic_warm(self.config.recording.keep_mic_warm);
+                changed = true;
+            }
+            changed |= ui.checkbox(&mut self.config.indicator.enabled, "錄音時顯示浮動指示器").changed();
+            if let Some(t) = &self.last_latency {
+                ui.label(egui::RichText::new(format!("上次延遲：{}", t.summary())).size(11.0).color(theme::text_secondary()));
+            }
+        });
+        ui.add_space(theme::SPACE_SM);
+
+        theme::section_frame(ui).show(ui, |ui| {
+            ui.label(egui::RichText::new("文字送出").size(13.0).color(theme::text_primary()));
+            let method_combo = |ui: &mut egui::Ui, id: &str, value: &mut InjectionMethod| -> bool {
+                let mut changed = false;
+                egui::ComboBox::from_id_source(id).selected_text(value.label()).show_ui(ui, |ui| {
+                    for m in InjectionMethod::all() {
+                        changed |= ui.selectable_value(value, m, m.label()).changed();
+                    }
+                });
+                changed
+            };
+            ui.horizontal(|ui| {
+                ui.label("預設方式");
+                changed |= method_combo(ui, "default_inject", &mut self.config.injection.default_method);
+            });
+            ui.horizontal(|ui| {
+                ui.label("還原剪貼簿延遲 (ms)");
+                changed |= ui.add(egui::DragValue::new(&mut self.config.injection.restore_delay_ms).clamp_range(50..=3000)).changed();
+            });
+            changed |= ui.checkbox(&mut self.config.injection.refocus_original_window, "送出前切回原本的視窗").changed();
+            ui.label(egui::RichText::new("各 App 規則（程序名稱 → 送出方式／情境／語氣）").size(12.0).color(theme::text_secondary()));
+            let mut remove = None;
+            egui::Grid::new("app_rules").striped(true).show(ui, |ui| {
+                ui.label("程序");
+                ui.label("方式");
+                ui.label("情境");
+                ui.label("語氣（AI）");
+                ui.label("換行=Shift+Enter");
+                ui.end_row();
+                for (i, rule) in self.config.injection.app_rules.iter_mut().enumerate() {
+                    changed |= ui.add(egui::TextEdit::singleline(&mut rule.process).desired_width(120.0)).changed();
+                    let mut method = rule.method.unwrap_or(InjectionMethod::Paste);
+                    let mut use_default = rule.method.is_none();
+                    ui.horizontal(|ui| {
+                        changed |= ui.checkbox(&mut use_default, "預設").changed();
+                        if !use_default {
+                            changed |= method_combo(ui, &format!("rule_m_{i}"), &mut method);
+                        }
+                    });
+                    rule.method = if use_default { None } else { Some(method) };
+                    let scen_label = rule.scenario.clone().unwrap_or_else(|| "目前情境".into());
+                    egui::ComboBox::from_id_source(format!("rule_s_{i}")).selected_text(scen_label).show_ui(ui, |ui| {
+                        changed |= ui.selectable_value(&mut rule.scenario, None, "目前情境").changed();
+                        for sc in Scenario::all() {
+                            changed |= ui.selectable_value(&mut rule.scenario, Some(sc.name().to_string()), sc.name()).changed();
+                        }
+                    });
+                    changed |= ui.add(egui::TextEdit::singleline(&mut rule.tone).desired_width(110.0)).changed();
+                    ui.horizontal(|ui| {
+                        changed |= ui.checkbox(&mut rule.newline_as_shift_enter, "").changed();
+                        if ui.small_button("✕").clicked() {
+                            remove = Some(i);
+                        }
+                    });
+                    ui.end_row();
+                }
+            });
+            if let Some(i) = remove {
+                self.config.injection.app_rules.remove(i);
+                changed = true;
+            }
+            ui.horizontal(|ui| {
+                if ui.button("＋ 新增規則").clicked() {
+                    self.config.injection.app_rules.push(AppRule {
+                        process: String::new(),
+                        method: None,
+                        scenario: None,
+                        tone: String::new(),
+                        newline_as_shift_enter: false,
+                    });
+                    changed = true;
+                }
+                let last_app = self.history.records().iter().find_map(|r| r.app.clone());
+                if let Some(app) = last_app {
+                    if ui.button(format!("加入上次輸入的 App（{app}）")).clicked()
+                        && !self.config.injection.app_rules.iter().any(|r| r.process.eq_ignore_ascii_case(&app))
+                    {
+                        self.config.injection.app_rules.push(AppRule { process: app, method: None, scenario: None, tone: String::new(), newline_as_shift_enter: false });
+                        changed = true;
+                    }
+                }
+                if ui.button("還原預設規則").clicked() {
+                    self.config.injection.app_rules = speaktype::modules::config::default_app_rules();
+                    changed = true;
+                }
+            });
+        });
+        ui.add_space(theme::SPACE_SM);
+
+        theme::section_frame(ui).show(ui, |ui| {
+            ui.label(egui::RichText::new("AI 潤稿（選用）").size(13.0).color(theme::text_primary()));
+            changed |= ui.checkbox(&mut self.config.ai_cleanup.enabled, "啟用：用 LLM 去除贅字、修正口誤、整理格式（失敗或逾時會直接送出本地整理結果）").changed();
+            ui.add_enabled_ui(self.config.ai_cleanup.enabled, |ui| {
+                egui::Grid::new("ai_grid").num_columns(2).show(ui, |ui| {
+                    ui.label("端點");
+                    changed |= ui.add(egui::TextEdit::singleline(&mut self.config.ai_cleanup.endpoint).desired_width(360.0)).changed();
+                    ui.end_row();
+                    ui.label("模型");
+                    changed |= ui.add(egui::TextEdit::singleline(&mut self.config.ai_cleanup.model).desired_width(200.0)).changed();
+                    ui.end_row();
+                    ui.label("API 金鑰");
+                    changed |= ui.add(egui::TextEdit::singleline(&mut self.config.ai_cleanup.api_key).password(true).desired_width(260.0)).changed();
+                    ui.end_row();
+                    ui.label("逾時 (ms)");
+                    changed |= ui.add(egui::DragValue::new(&mut self.config.ai_cleanup.timeout_ms).clamp_range(500..=30000)).changed();
+                    ui.end_row();
+                    ui.label("自訂指示");
+                    changed |= ui.add(egui::TextEdit::multiline(&mut self.config.ai_cleanup.custom_instructions).desired_rows(2).desired_width(360.0)).changed();
+                    ui.end_row();
+                });
+                ui.horizontal(|ui| {
+                    if ui.small_button("本機 Ollama").clicked() {
+                        self.config.ai_cleanup.endpoint = "http://localhost:11434/v1/chat/completions".into();
+                        self.config.ai_cleanup.model = "qwen2.5:3b".into();
+                        changed = true;
+                    }
+                    if ui.small_button("OpenAI").clicked() {
+                        self.config.ai_cleanup.endpoint = "https://api.openai.com/v1/chat/completions".into();
+                        self.config.ai_cleanup.model = "gpt-4o-mini".into();
+                        changed = true;
+                    }
+                    if ui.small_button("Groq").clicked() {
+                        self.config.ai_cleanup.endpoint = "https://api.groq.com/openai/v1/chat/completions".into();
+                        self.config.ai_cleanup.model = "llama-3.1-8b-instant".into();
+                        changed = true;
+                    }
+                });
+                ui.label(egui::RichText::new("金鑰以純文字存在 config.toml；也可改用環境變數 SPEAKTYPE_AI_API_KEY。").size(11.0).color(theme::text_secondary()));
+            });
+        });
+        changed
     }
 
     fn draw_model_manager_window(&mut self, ctx: &egui::Context) {
