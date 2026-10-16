@@ -1,4 +1,4 @@
-SpeakType 0.5.3
+SpeakType 0.5.4
 
 ## 更新內容
 - **新增 Vulkan 版**：NVIDIA、AMD、Intel 顯示卡都能用 GPU 辨識，只需一般顯示卡驅動程式。

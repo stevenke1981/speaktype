@@ -27,7 +27,7 @@ mod delay_hook {
     }
     type Hook = unsafe extern "system" fn(u32, *mut DelayLoadInfo) -> *mut c_void;
 
-    extern "system" {
+    unsafe extern "system" {
         fn GetModuleHandleW(name: *const u16) -> *mut c_void;
     }
 
@@ -50,7 +50,11 @@ mod delay_hook {
     const DLI_FAIL_GET_PROC: u32 = 4;
 
     unsafe extern "system" fn hook(notify: u32, info: *mut DelayLoadInfo) -> *mut c_void {
-        match notify {
+        unsafe { hook_inner(notify, info) }
+    }
+
+    unsafe fn hook_inner(notify: u32, info: *mut DelayLoadInfo) -> *mut c_void {
+        unsafe { match notify {
             // Pretend the DLL is our own exe; every symbol lookup then fails
             // and lands in DLI_FAIL_GET_PROC below.
             DLI_FAIL_LOAD_LIB => GetModuleHandleW(std::ptr::null()),
@@ -81,10 +85,10 @@ mod delay_hook {
                 f as *mut c_void
             }
             _ => std::ptr::null_mut(),
-        }
+        } }
     }
 
-    #[no_mangle]
+    #[unsafe(no_mangle)]
     #[used]
-    pub static __pfnDliFailureHook2: Hook = hook;
+    static __pfnDliFailureHook2: Hook = hook;
 }

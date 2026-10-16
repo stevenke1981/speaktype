@@ -1,4 +1,4 @@
-# SpeakType user guide (v0.5.3)
+# SpeakType user guide (v0.5.4)
 
 [繁體中文](USER_GUIDE.zh-TW.md) | [Back to README](../README.en.md)
 
@@ -30,7 +30,7 @@ Voice commands (when enabled): 刪掉/刪除 (delete), 換行 (newline), 新段�
 Input device & gain · transcription mode (stable/fast), language (auto) · output cleanup (punctuation, fillers, self-corrections, lists, CJK spacing, Traditional Chinese) · scenarios (chat/writing/code) · custom vocabulary · text sending (Ctrl+V, Ctrl+Shift+V, Unicode typing, copy only) · per-app rules · optional AI cleanup (Ollama / OpenAI-compatible) · recordings retention (30 days / 4096 MB) · startup · theme · diagnostics. Saved to `%LOCALAPPDATA%\SpeakType\config\config.toml`.
 
 ## Troubleshooting
-- **Access denied when downloading a model**: update to v0.5.3+, keep the model folder out of `C:\Program Files`, exclude it from antivirus if `.bin.part` is locked.
+- **Access denied when downloading a model**: update to v0.5.4+, keep the model folder out of `C:\Program Files`, exclude it from antivirus if `.bin.part` is locked.
 - **No audio**: choose the right mic; allow desktop apps microphone access in Windows privacy settings.
 - **No text inserted**: run SpeakType as admin if the target app is admin; use Ctrl+Shift+V or Unicode typing for terminals.
 - **Report a bug**: Diagnostics → export bundle, attach to an [issue](https://github.com/stevenke1981/speaktype/issues).

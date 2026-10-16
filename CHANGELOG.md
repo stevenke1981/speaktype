@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.3 — 2026-10-17
+## 0.5.4 — 2026-10-17
 ### 新增
 - Vulkan 版（`speaktype-vulkan-*`），支援 NVIDIA／AMD／Intel GPU；沒有 Vulkan 驅動時改用 CPU。
 - CUDA 版改在安裝時從 NVIDIA 官方 redist 下載 cudart／cuBLAS（SHA256 驗證，3 次重試，失敗改用 GitHub 鏡像 `cuda-libs-12.6`），安裝程式不再內含這些 DLL。

@@ -1,4 +1,4 @@
-# SpeakType 使用說明（v0.5.3）
+# SpeakType 使用說明（v0.5.4）
 
 [English](USER_GUIDE.en.md) ｜ [回到 README](../README.md)
 
@@ -97,7 +97,7 @@ GPU 版在找不到驅動程式或元件時會自動改用 CPU；「設定 → �
 
 | 問題 | 處理方式 |
 |---|---|
-| 下載模型「存取被拒」 | 更新到 v0.5.3 以上；不要把模型資料夾設在 `C:\Program Files`；防毒軟體可能鎖住 `.bin.part`，可暫時將 `%LOCALAPPDATA%\SpeakType\models` 加入排除 |
+| 下載模型「存取被拒」 | 更新到 v0.5.4 以上；不要把模型資料夾設在 `C:\Program Files`；防毒軟體可能鎖住 `.bin.part`，可暫時將 `%LOCALAPPDATA%\SpeakType\models` 加入排除 |
 | 下載失敗／很慢 | 確認可連到 `huggingface.co`；公司網路或代理可能擋下，錯誤訊息會顯示 HTTP 狀態 |
 | 沒有聲音、辨識結果空白 | 選對麥克風並看即時音量；Windows「設定 → 隱私權與安全性 → 麥克風」允許桌面應用程式 |
 | 快捷鍵沒反應 | 確認「啟用全域快捷鍵」；快捷鍵可能與其他程式衝突，改用其他組合 |
