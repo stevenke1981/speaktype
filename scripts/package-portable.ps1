@@ -12,6 +12,6 @@ $stage = Join-Path 'dist' $name
 Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $stage | Out-Null
 Copy-Item 'target\release\speaktype.exe', 'README.md', 'README.en.md' $stage
-Get-ChildItem 'target\release\*.dll' -ErrorAction SilentlyContinue | Copy-Item -Destination $stage
+Get-ChildItem 'target\release\*.dll', 'target\release\*.ps1' -ErrorAction SilentlyContinue | Copy-Item -Destination $stage
 Compress-Archive -Force -Path $stage -DestinationPath "dist\$name.zip"
 Get-Item "dist\$name.zip" | Format-List Name, Length

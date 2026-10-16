@@ -111,38 +111,46 @@ jobs:
       GGML_AMX_TILE: "OFF"
       GGML_AMX_INT8: "OFF"
       GGML_AMX_BF16: "OFF"
+      CMAKE_GENERATOR: Ninja
+      CMAKE_C_COMPILER: clang-cl
+      CMAKE_CXX_COMPILER: clang-cl
+      CXXFLAGS: /EHsc
       CMAKE_CUDA_ARCHITECTURES: "61;75;86;89"
+      CMAKE_CUDA_HOST_COMPILER: cl
     steps:
       - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           key: cuda
       - uses: Jimver/cuda-toolkit@v0.2.24
-        id: cuda
         with:
           cuda: '12.6.3'
           method: local
           sub-packages: '["nvcc","cudart","cublas","cublas_dev","thrust","visual_studio_integration"]'
       - name: Build (CUDA)
         run: cargo build --release --locked --features cuda --bins
-      - name: Bundle CUDA runtime DLLs
+      - name: CPU fallback without GPU runtime
         shell: pwsh
         run: |
-          foreach ($d in 'cudart64_12.dll','cublas64_12.dll','cublasLt64_12.dll') {
-            Copy-Item (Join-Path $env:CUDA_PATH "bin\$d") target\release\
-          }
-          Get-ChildItem target\release\*.dll | Format-Table Name, Length
-      - name: Starts without NVIDIA driver (delay-load check)
-        shell: pwsh
-        run: |
-          # GUI-subsystem exe: wait for it explicitly. 0xC0000135 = missing DLL.
+          # Hide toolkit/SDK runtime DLLs: the exe must still start and transcribe on the CPU.
+          $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'CUDA|Vulkan' }) -join ';'
           $p = Start-Process -FilePath .\target\release\speaktype.exe -ArgumentList '--version' -Wait -PassThru -NoNewWindow
-          Write-Host "exit code: $($p.ExitCode)"
           if ($p.ExitCode -ne 0) { throw ("speaktype.exe failed to start: 0x{0:X}" -f $p.ExitCode) }
+          New-Item -ItemType Directory -Force bench | Out-Null
+          Invoke-WebRequest -UseBasicParsing -OutFile bench\ggml-base.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
+          Invoke-WebRequest -UseBasicParsing -OutFile bench\jfk.wav https://github.com/ggml-org/whisper.cpp/raw/master/samples/jfk.wav
+          .\target\release\speaktype-bench.exe bench\ggml-base.bin bench\jfk.wav 2 --gpu
+          if ($LASTEXITCODE -ne 0) { throw "bench failed: $LASTEXITCODE" }
+      - name: Ship CUDA runtime downloader
+        shell: pwsh
+        run: Copy-Item installer\cuda-libs.ps1 target\release\
       - name: Installer (CUDA)
         shell: pwsh
-        run: ./scripts/build-installer.ps1 -OutputName speaktype-cuda-setup-windows-x64
+        run: ./scripts/build-installer.ps1 -OutputName speaktype-cuda-setup-windows-x64 -Cuda
       - name: Portable zip (CUDA)
         shell: pwsh
         run: ./scripts/package-portable.ps1 -SkipBuild -Name speaktype-cuda-windows-x64
@@ -153,6 +161,7 @@ jobs:
             ForEach-Object { "{0}  {1}" -f $_.Hash.ToLower(), (Split-Path $_.Path -Leaf) } |
             Set-Content -Encoding ascii dist\SHA256SUMS-cuda.txt
           Get-Content dist\SHA256SUMS-cuda.txt
+          Get-ChildItem dist\speaktype-cuda-* | Format-Table Name, Length
       - uses: actions/upload-artifact@v4
         with:
           name: speaktype-cuda-windows-x64
@@ -171,3 +180,85 @@ jobs:
             dist/speaktype-cuda-setup-windows-x64.exe
             dist/speaktype-cuda-windows-x64.zip
             dist/SHA256SUMS-cuda.txt
+
+  windows-vulkan:
+    name: Build Windows x64 (Vulkan)
+    runs-on: windows-latest
+    env:
+      LIBCLANG_PATH: C:\Program Files\LLVM\bin
+      GGML_NATIVE: "OFF"
+      GGML_AVX: "ON"
+      GGML_AVX2: "ON"
+      GGML_FMA: "ON"
+      GGML_F16C: "ON"
+      GGML_AVX512: "OFF"
+      GGML_AVX512_VBMI: "OFF"
+      GGML_AVX512_VNNI: "OFF"
+      GGML_AVX512_BF16: "OFF"
+      GGML_AVX_VNNI: "OFF"
+      GGML_AMX_TILE: "OFF"
+      GGML_AMX_INT8: "OFF"
+      GGML_AMX_BF16: "OFF"
+      CMAKE_GENERATOR: Ninja
+      CMAKE_C_COMPILER: clang-cl
+      CMAKE_CXX_COMPILER: clang-cl
+      CXXFLAGS: /EHsc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: vulkan
+      - uses: humbletim/install-vulkan-sdk@v1.2
+        with:
+          version: 1.4.309.0
+          cache: true
+      - name: Build (Vulkan)
+        run: cargo build --release --locked --features vulkan --bins
+      - name: CPU fallback without GPU runtime
+        shell: pwsh
+        run: |
+          # Hide toolkit/SDK runtime DLLs: the exe must still start and transcribe on the CPU.
+          $env:PATH = ($env:PATH -split ';' | Where-Object { $_ -notmatch 'CUDA|Vulkan' }) -join ';'
+          $p = Start-Process -FilePath .\target\release\speaktype.exe -ArgumentList '--version' -Wait -PassThru -NoNewWindow
+          if ($p.ExitCode -ne 0) { throw ("speaktype.exe failed to start: 0x{0:X}" -f $p.ExitCode) }
+          New-Item -ItemType Directory -Force bench | Out-Null
+          Invoke-WebRequest -UseBasicParsing -OutFile bench\ggml-base.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
+          Invoke-WebRequest -UseBasicParsing -OutFile bench\jfk.wav https://github.com/ggml-org/whisper.cpp/raw/master/samples/jfk.wav
+          .\target\release\speaktype-bench.exe bench\ggml-base.bin bench\jfk.wav 2 --gpu
+          if ($LASTEXITCODE -ne 0) { throw "bench failed: $LASTEXITCODE" }
+      - name: Installer (Vulkan)
+        shell: pwsh
+        run: ./scripts/build-installer.ps1 -OutputName speaktype-vulkan-setup-windows-x64
+      - name: Portable zip (Vulkan)
+        shell: pwsh
+        run: ./scripts/package-portable.ps1 -SkipBuild -Name speaktype-vulkan-windows-x64
+      - name: Checksums
+        shell: pwsh
+        run: |
+          Get-FileHash dist\speaktype-vulkan-setup-windows-x64.exe, dist\speaktype-vulkan-windows-x64.zip -Algorithm SHA256 |
+            ForEach-Object { "{0}  {1}" -f $_.Hash.ToLower(), (Split-Path $_.Path -Leaf) } |
+            Set-Content -Encoding ascii dist\SHA256SUMS-vulkan.txt
+          Get-Content dist\SHA256SUMS-vulkan.txt
+          Get-ChildItem dist\speaktype-vulkan-* | Format-Table Name, Length
+      - uses: actions/upload-artifact@v4
+        with:
+          name: speaktype-vulkan-windows-x64
+          path: |
+            dist/speaktype-vulkan-setup-windows-x64.exe
+            dist/speaktype-vulkan-windows-x64.zip
+            dist/SHA256SUMS-vulkan.txt
+          if-no-files-found: error
+      - name: Publish to GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          make_latest: ${{ !contains(github.ref_name, '-') }}
+          files: |
+            dist/speaktype-vulkan-setup-windows-x64.exe
+            dist/speaktype-vulkan-windows-x64.zip
+            dist/SHA256SUMS-vulkan.txt
