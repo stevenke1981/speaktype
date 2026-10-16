@@ -123,7 +123,7 @@ jobs:
         with:
           cuda: '12.6.3'
           method: local
-          sub-packages: '["nvcc","cudart","cublas","cublas_dev","visual_studio_integration","crt","nvrtc"]'
+          sub-packages: '["nvcc","cudart","cublas","cublas_dev","thrust","visual_studio_integration"]'
       - name: Build (CUDA)
         run: cargo build --release --locked --features cuda --bins
       - name: Bundle CUDA runtime DLLs
