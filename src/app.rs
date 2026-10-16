@@ -89,6 +89,8 @@ pub struct App {
     error_log: Vec<String>,
     transcription_status: String,
     transcription_busy: bool,
+    /// Incremented per job; the watchdog only fires for the job it was armed for.
+    transcription_job: u64,
     transcription_draft: String,
     pending_retry: Option<TranscriptionRequest>,
     pending_preview: Option<String>,

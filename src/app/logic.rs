@@ -44,6 +44,7 @@ impl App {
             error_log,
             transcription_status: "就緒".to_string(),
             transcription_busy: false,
+            transcription_job: 0,
             transcription_draft: String::new(),
             pending_retry: None,
             pending_preview: None,
@@ -628,8 +629,12 @@ impl App {
         request.injection = self.config.injection.clone();
         request.ai = self.config.ai_cleanup.clone();
 
+        let timeout = transcription_timeout(request.duration_sec);
         self.pending_retry = Some(request.clone());
         self.transcription_busy = true;
+        self.transcription_job += 1;
+        let job = self.transcription_job;
+        Timer::single_shot(timeout, move || with_app(move |a| a.transcription_watchdog(job, timeout)));
         self.transcription_draft.clear();
         self.transcription_status = "排入背景轉錄...".to_string();
         self.recording = false;
@@ -777,11 +782,25 @@ impl App {
         }
     }
 
+    pub(super) fn transcription_watchdog(&mut self, job: u64, timeout: Duration) {
+        if !self.transcription_busy || self.transcription_job != job {
+            return;
+        }
+        self.transcription_busy = false;
+        self.transcription_status = "逾時".to_string();
+        self.record_error(format!(
+            "轉錄超過 {} 秒仍未完成，已取消等待。可能是 CPU 太慢：請改用較小的模型（small q5_1），或安裝 CUDA 版以使用 NVIDIA GPU。詳見記錄檔。",
+            timeout.as_secs()
+        ));
+        self.update_indicator();
+    }
+
     pub(super) fn handle_transcription_event(&mut self, event: TranscriptionEvent) {
         match event {
             TranscriptionEvent::Status(status) => self.transcription_status = status,
             TranscriptionEvent::Draft(draft) => self.transcription_draft = draft,
             TranscriptionEvent::Completed(result) => {
+                // A late result after the watchdog fired is still delivered.
                 self.transcription_busy = false;
                 self.accept_transcription(result);
                 self.update_indicator();
@@ -809,5 +828,22 @@ impl App {
         }
         self.push_settings();
         self.push_main();
+    }
+}
+
+/// Upper bound for one transcription before the UI gives up waiting:
+/// 90 s minimum (covers a first-time model load), plus 20x the clip length.
+pub(super) fn transcription_timeout(duration_sec: f32) -> Duration {
+    let secs = 90.0 + 20.0 * duration_sec.max(0.0) as f64;
+    Duration::from_secs_f64(secs.min(900.0))
+}
+
+#[cfg(test)]
+mod watchdog_tests {
+    #[test]
+    fn timeout_scales_and_caps() {
+        assert_eq!(super::transcription_timeout(0.0).as_secs(), 90);
+        assert_eq!(super::transcription_timeout(10.0).as_secs(), 290);
+        assert_eq!(super::transcription_timeout(1000.0).as_secs(), 900);
     }
 }

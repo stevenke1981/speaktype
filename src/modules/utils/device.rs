@@ -62,7 +62,11 @@ fn detect_gpu(use_cuda: bool) -> String {
     }
 
     if name.to_ascii_lowercase().contains("nvidia") {
-        format!("{name} (CUDA)：就緒")
+        if crate::modules::transcription::transcriber::built_with_cuda() {
+            format!("{name}：CUDA 可用")
+        } else {
+            format!("{name}：已偵測（此版本為 CPU 版，請改裝 CUDA 版以使用 GPU）")
+        }
     } else {
         format!("{name}：已偵測，但未確認 CUDA 支援")
     }
@@ -71,6 +75,32 @@ fn detect_gpu(use_cuda: bool) -> String {
 #[cfg(windows)]
 fn query_video_controller_name() -> Option<String> {
     query_video_controller_with_wmic().or_else(query_video_controller_with_powershell)
+}
+
+/// Prefer a real NVIDIA/AMD/Intel adapter over virtual/basic display drivers.
+pub fn pick_gpu_name<S: AsRef<str>>(names: &[S]) -> Option<String> {
+    let names: Vec<&str> = names.iter().map(|n| n.as_ref().trim()).filter(|n| !n.is_empty()).collect();
+    fn real(n: &str) -> bool {
+        let l = n.to_ascii_lowercase();
+        !l.contains("basic display") && !l.contains("remote display") && !l.contains("virtual")
+    }
+    for vendor in ["nvidia", "amd", "radeon", "intel"] {
+        if let Some(n) = names.iter().find(|n| real(n) && n.to_ascii_lowercase().contains(vendor)) {
+            return Some(n.to_string());
+        }
+    }
+    names.iter().find(|n| real(n)).or(names.first()).map(|n| n.to_string())
+}
+
+#[cfg(windows)]
+trait PickGpu {
+    fn pipe_pick(self) -> Option<String>;
+}
+#[cfg(windows)]
+impl PickGpu for Vec<&str> {
+    fn pipe_pick(self) -> Option<String> {
+        pick_gpu_name(&self)
+    }
 }
 
 #[cfg(not(windows))]
@@ -96,11 +126,8 @@ fn query_video_controller_with_wmic() -> Option<String> {
         .filter_map(|line| line.trim().strip_prefix("Name="))
         .map(str::trim)
         .filter(|name| !name.is_empty())
-        .find(|name| {
-            let lower = name.to_ascii_lowercase();
-            !lower.contains("basic display") && !lower.contains("remote display")
-        })
-        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>()
+        .pipe_pick()
 }
 
 #[cfg(windows)]
@@ -124,9 +151,17 @@ fn query_video_controller_with_powershell() -> Option<String> {
         .lines()
         .map(str::trim)
         .filter(|name| !name.is_empty())
-        .find(|name| {
-            let lower = name.to_ascii_lowercase();
-            !lower.contains("basic display") && !lower.contains("remote display")
-        })
-        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>()
+        .pipe_pick()
+}
+
+#[cfg(test)]
+mod gpu_pick_tests {
+    #[test]
+    fn prefers_nvidia_over_virtual_display() {
+        let names = ["Virtual Display Driver", "NVIDIA GeForce RTX 3060 Ti"];
+        assert_eq!(super::pick_gpu_name(&names).as_deref(), Some("NVIDIA GeForce RTX 3060 Ti"));
+        assert_eq!(super::pick_gpu_name(&["Intel(R) UHD Graphics"]).as_deref(), Some("Intel(R) UHD Graphics"));
+        assert_eq!(super::pick_gpu_name::<&str>(&[]), None);
+    }
 }
