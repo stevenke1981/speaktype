@@ -104,7 +104,7 @@ See [docs/PERFORMANCE.md](docs/PERFORMANCE.md). NVIDIA users can build `cargo bu
 ## Troubleshooting
 
 - **Model download fails with "Access denied"**: update to v0.5.1-test or later (downloads go to `%LOCALAPPDATA%\SpeakType\models`). Don't set the model folder under `C:\Program Files`. Antivirus may also lock the `.bin.part` file.
-- **Stuck on "transcribing" / slow**: update to v0.5.2-test (≈5× faster CPU build, timeout). With an NVIDIA GPU install the `speaktype-cuda` build and set Settings → recognition hardware to Auto or GPU (driver R525+).
+- **Stuck on "transcribing" / slow**: the planned v0.5.3 release includes the faster CPU build and timeout protection; update when it is available on the Releases page. With an NVIDIA GPU install the `speaktype-cuda` build and set Settings → recognition hardware to Auto or GPU (driver R525+).
 - **Hotkey works but no text appears**: if the target app runs as administrator, run SpeakType as administrator too.
 - **No audio**: pick the right microphone in Settings → Input device, and allow desktop apps to use the microphone in Windows privacy settings.
 
