@@ -82,12 +82,13 @@ impl CaptureBuffer {
 pub const PREROLL_MS: u32 = 300;
 
 impl Recorder {
+    /// Cheap: the audio device is looked up lazily on first use (device
+    /// enumeration costs tens of ms on Windows and must not delay startup).
     pub fn new(input_device_name: Option<String>, gain: f32) -> Self {
         let host = cpal::default_host();
-        let input_device = find_input_device(&host, input_device_name.as_deref());
         Self {
             host,
-            input_device,
+            input_device: None,
             input_device_name,
             stream: None,
             shared: Arc::new(Mutex::new(CaptureBuffer {
@@ -112,11 +113,11 @@ impl Recorder {
     }
 
     pub fn set_input_device_name(&mut self, input_device_name: Option<String>) {
-        if self.input_device_name == input_device_name && self.input_device.is_some() {
+        if self.input_device_name == input_device_name {
             return;
         }
         self.input_device_name = input_device_name;
-        self.input_device = find_input_device(&self.host, self.input_device_name.as_deref());
+        self.input_device = None;
         if !self.capturing {
             self.stream = None;
             if self.keep_warm {
@@ -152,6 +153,9 @@ impl Recorder {
     fn ensure_stream(&mut self) -> Result<(), String> {
         if self.stream.is_some() {
             return Ok(());
+        }
+        if self.input_device.is_none() {
+            self.input_device = find_input_device(&self.host, self.input_device_name.as_deref());
         }
         let device = self
             .input_device

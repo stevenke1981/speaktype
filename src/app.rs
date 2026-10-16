@@ -26,6 +26,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub struct SpeakTypeApp {
+    audio_devices_loaded: bool,
     scroll_to_speed_settings: u8,
     history_filter: String,
     last_latency: Option<speaktype::modules::engine::PipelineTimings>,
@@ -108,6 +109,7 @@ impl SpeakTypeApp {
         }
 
         let mut app = Self {
+            audio_devices_loaded: false,
             scroll_to_speed_settings: 0,
             history_filter: String::new(),
             last_latency: None,
@@ -162,7 +164,6 @@ impl SpeakTypeApp {
             let ctx = ctx.clone();
             app.hotkey.set_waker(move || ctx.request_repaint());
         }
-        app.engine.set_keep_mic_warm(app.config.recording.keep_mic_warm);
         // CI / screenshot hooks
         match std::env::var("SPEAKTYPE_UI_PAGE").as_deref() {
             Ok("settings") => app.show_settings_window = true,
@@ -185,7 +186,6 @@ impl SpeakTypeApp {
             app.config.recording.input_device_name.clone(),
             app.config.recording.gain,
         );
-        app.audio_devices = app.engine.input_devices();
         if std::env::var_os("SPEAKTYPE_SKIP_MODEL_LOAD").is_none() {
             app.start_model_job();
         }
@@ -766,6 +766,10 @@ impl eframe::App for SpeakTypeApp {
         self.draw_recording_indicator(ctx);
         if !self.startup_reported {
             self.startup_reported = true;
+            // Open the warm mic stream only after the first frame is on screen.
+            if self.config.recording.keep_mic_warm {
+                self.engine.set_keep_mic_warm(true);
+            }
             let ms = self.startup_started.elapsed().as_secs_f64() * 1000.0;
             log_error("startup", format!("time to first frame: {ms:.0} ms"));
             if let Some(path) = self.startup_probe.clone() {
@@ -1127,6 +1131,11 @@ impl SpeakTypeApp {
         });
         ui.add_space(theme::SPACE_SM);
 
+        if !self.audio_devices_loaded {
+            // Enumerate devices only when Settings is opened (slow on Windows).
+            self.audio_devices_loaded = true;
+            self.audio_devices = self.engine.input_devices();
+        }
         let mut should_save = false;
         let mut should_reload_model = false;
         let mut pending_startup_update = None;

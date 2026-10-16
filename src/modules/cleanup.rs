@@ -340,7 +340,7 @@ pub fn cjk_spacing(text: &str) -> String {
     let mut prev: Option<char> = None;
     for ch in text.chars() {
         if let Some(p) = prev {
-            let need = (is_cjk(p) && (ch.is_ascii_alphabetic() || ch.is_ascii_digit() && false))
+            let need = (is_cjk(p) && ch.is_ascii_alphabetic())
                 || ((p.is_ascii_alphabetic()) && is_cjk(ch));
             if need {
                 out.push(' ');

@@ -55,7 +55,7 @@ jobs:
       - name: Build (release)
         run: cargo build --release --locked --bins
       - name: Test
-        run: cargo test --release --locked
+        run: cargo test --release --locked -- --test-threads=1
       - name: Version
         run: target\release\speaktype.exe --version
       - name: GUI screenshots + startup time
