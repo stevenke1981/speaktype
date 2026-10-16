@@ -277,7 +277,7 @@ pub fn draw_recording_overlay(
             let frame = egui::Frame::none()
                 .fill(Color32::from_rgba_premultiplied(0, 0, 0, 200))
                 .rounding(Rounding::same(RADIUS_XL))
-                .stroke(Stroke::new(1.0, Color32::from_rgba_premultiplied(74, 108, 247, 80)))
+                .stroke(Stroke::new(1.0_f32, Color32::from_rgba_premultiplied(74, 108, 247, 80)))
                 .shadow(egui::epaint::Shadow {
                     offset: Vec2::new(0.0, 8.0),
                     blur: 24.0,

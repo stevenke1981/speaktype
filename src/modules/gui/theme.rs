@@ -299,7 +299,7 @@ fn apply_theme(ctx: &egui::Context, theme: SpeakTypeTheme) {
             override_text_color: Some(tx),
             extreme_bg_color: wf,
 
-            window_stroke: Stroke::new(1.0, bd),
+            window_stroke: Stroke::new(1.0_f32, bd),
             window_shadow: egui::epaint::Shadow {
                 offset: Vec2::new(0.0, 8.0),
                 blur: 24.0,
@@ -314,40 +314,40 @@ fn apply_theme(ctx: &egui::Context, theme: SpeakTypeTheme) {
                 noninteractive: egui::style::WidgetVisuals {
                     bg_fill: fb,
                     weak_bg_fill: fb,
-                    fg_stroke: Stroke::new(1.0, tx2),
-                    bg_stroke: Stroke::new(1.0, bd),
+                    fg_stroke: Stroke::new(1.0_f32, tx2),
+                    bg_stroke: Stroke::new(1.0_f32, bd),
                     rounding: Rounding::same(RADIUS_SM),
                     expansion: 0.0,
                 },
                 inactive: egui::style::WidgetVisuals {
                     bg_fill: cf,
                     weak_bg_fill: cf,
-                    fg_stroke: Stroke::new(1.5, tx),
-                    bg_stroke: Stroke::new(1.0, bd),
+                    fg_stroke: Stroke::new(1.5_f32, tx),
+                    bg_stroke: Stroke::new(1.0_f32, bd),
                     rounding: Rounding::same(RADIUS_MD),
                     expansion: 0.0,
                 },
                 hovered: egui::style::WidgetVisuals {
                     bg_fill: fb,
                     weak_bg_fill: fb,
-                    fg_stroke: Stroke::new(1.5, tx),
-                    bg_stroke: Stroke::new(1.0, a),
+                    fg_stroke: Stroke::new(1.5_f32, tx),
+                    bg_stroke: Stroke::new(1.0_f32, a),
                     rounding: Rounding::same(RADIUS_MD),
                     expansion: 1.0,
                 },
                 active: egui::style::WidgetVisuals {
                     bg_fill: a,
                     weak_bg_fill: a,
-                    fg_stroke: Stroke::new(2.0, Color32::WHITE),
-                    bg_stroke: Stroke::new(1.0, a_hover),
+                    fg_stroke: Stroke::new(2.0_f32, Color32::WHITE),
+                    bg_stroke: Stroke::new(1.0_f32, a_hover),
                     rounding: Rounding::same(RADIUS_MD),
                     expansion: 0.0,
                 },
                 open: egui::style::WidgetVisuals {
                     bg_fill: fb,
                     weak_bg_fill: fb,
-                    fg_stroke: Stroke::new(2.0, a),
-                    bg_stroke: Stroke::new(1.0, a),
+                    fg_stroke: Stroke::new(2.0_f32, a),
+                    bg_stroke: Stroke::new(1.0_f32, a),
                     rounding: Rounding::same(RADIUS_MD),
                     expansion: 0.0,
                 },
@@ -355,7 +355,7 @@ fn apply_theme(ctx: &egui::Context, theme: SpeakTypeTheme) {
 
             selection: egui::style::Selection {
                 bg_fill: sel,
-                stroke: Stroke::new(1.0, a),
+                stroke: Stroke::new(1.0_f32, a),
             },
 
             hyperlink_color: a,
@@ -405,7 +405,7 @@ pub fn card_frame(_ui: &egui::Ui) -> egui::Frame {
     let theme = current_theme();
     egui::Frame::none()
         .fill(card_bg_color(theme))
-        .stroke(Stroke::new(1.0, border_color_fn(theme)))
+        .stroke(Stroke::new(1.0_f32, border_color_fn(theme)))
         .rounding(Rounding::same(RADIUS_LG))
         .inner_margin(Margin::symmetric(SPACE_MD, SPACE_MD))
 }
@@ -415,7 +415,7 @@ pub fn section_frame(_ui: &egui::Ui) -> egui::Frame {
     let theme = current_theme();
     egui::Frame::none()
         .fill(hover_bg(theme))
-        .stroke(Stroke::new(1.0, border_color_fn(theme)))
+        .stroke(Stroke::new(1.0_f32, border_color_fn(theme)))
         .rounding(Rounding::same(RADIUS_SM))
         .inner_margin(Margin::symmetric(SPACE_SM, SPACE_SM))
 }
