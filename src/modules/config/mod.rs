@@ -43,19 +43,39 @@ pub struct AppConfig {
     /// Windows 啟動設定
     #[serde(default)]
     pub startup: StartupConfig,
+
+    /// 語音辨識設定（語言、速度）
+    #[serde(default)]
+    pub transcription: TranscriptionConfig,
+
+    /// 文字送出方式（貼上／Unicode 打字）與各 App 規則
+    #[serde(default)]
+    pub injection: InjectionConfig,
+
+    /// 選用的 AI 潤稿（本機 Ollama / LM Studio 或 OpenAI 相容 API）
+    #[serde(default)]
+    pub ai_cleanup: AiCleanupConfig,
+
+    /// 浮動錄音指示器
+    #[serde(default)]
+    pub indicator: IndicatorConfig,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
             last_scenario: None,
-            model_name: Some("large-v3-turbo".to_string()),
+            model_name: Some(models::DEFAULT_MODEL.to_string()),
             models_dir: Some(default_models_dir().unwrap_or_else(|| "models".to_string())),
             use_cuda: true,
             recording: RecordingConfig::default(),
             hotkeys: HotkeyConfig::default(),
             output: OutputConfig::default(),
             startup: StartupConfig::default(),
+            transcription: TranscriptionConfig::default(),
+            injection: InjectionConfig::default(),
+            ai_cleanup: AiCleanupConfig::default(),
+            indicator: IndicatorConfig::default(),
         }
     }
 }
@@ -82,6 +102,10 @@ pub struct RecordingConfig {
     #[serde(default)]
     pub transcription_mode: TranscriptionMode,
 
+    /// 兩次錄音之間保持麥克風開啟（按下快捷鍵即錄，並保留 300ms 預錄）
+    #[serde(default = "default_true_rec")]
+    pub keep_mic_warm: bool,
+
     /// 錄音檔保留天數，0 表示不依天數刪除
     #[serde(default = "default_recording_retention_days")]
     pub retention_days: u32,
@@ -99,6 +123,7 @@ impl Default for RecordingConfig {
             input_device_name: None,
             gain: 1.0,
             transcription_mode: TranscriptionMode::default(),
+            keep_mic_warm: true,
             retention_days: 30,
             max_total_mb: 4096,
         }
@@ -282,6 +307,18 @@ pub struct ScenarioOutputRules {
 
     #[serde(default)]
     pub auto_line_breaks: bool,
+
+    /// 偵測「第一…第二…」「首先…其次…」等口述清單並排成條列
+    #[serde(default = "default_true")]
+    pub format_lists: bool,
+
+    /// 移除口誤更正（「三點，不對，四點」→「四點」）
+    #[serde(default = "default_true")]
+    pub resolve_self_corrections: bool,
+
+    /// 中英文之間自動加空白（「用GitHub」→「用 GitHub」）
+    #[serde(default = "default_true")]
+    pub cjk_spacing: bool,
 }
 
 impl ScenarioOutputRules {
@@ -289,9 +326,12 @@ impl ScenarioOutputRules {
         Self {
             auto_punctuation: true,
             format_paragraphs: false,
-            remove_fillers: false,
+            remove_fillers: true,
             preserve_code_symbols: false,
             auto_line_breaks: false,
+            format_lists: true,
+            resolve_self_corrections: true,
+            cjk_spacing: true,
         }
     }
 
@@ -302,6 +342,9 @@ impl ScenarioOutputRules {
             remove_fillers: true,
             preserve_code_symbols: false,
             auto_line_breaks: true,
+            format_lists: true,
+            resolve_self_corrections: true,
+            cjk_spacing: true,
         }
     }
 
@@ -312,6 +355,9 @@ impl ScenarioOutputRules {
             remove_fillers: false,
             preserve_code_symbols: true,
             auto_line_breaks: false,
+            format_lists: false,
+            resolve_self_corrections: true,
+            cjk_spacing: false,
         }
     }
 }
@@ -339,8 +385,8 @@ impl Default for StartupConfig {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ChineseConversionMode {
-    #[default]
     Disabled,
+    #[default]
     TraditionalTaiwan,
     SimplifiedChina,
 }
@@ -384,7 +430,6 @@ impl AppConfig {
         {
             self.hotkeys.record_toggle = "Ctrl+Shift+L".to_string();
         }
-        self.hotkeys.hold_to_record = true;
         if self.output.vocabulary.entries.is_empty() {
             self.output
                 .vocabulary
@@ -484,6 +529,10 @@ fn default_models_dir() -> Option<String> {
     None
 }
 
+fn default_true_rec() -> bool {
+    true
+}
+
 fn default_use_cuda() -> bool {
     true
 }
@@ -558,7 +607,7 @@ mod tests {
         assert_eq!(config.recording.retention_days, 30);
         assert_eq!(config.recording.max_total_mb, 4096);
         assert!(config.output.auto_inject_focused_window);
-        assert_eq!(config.output.chinese_conversion, ChineseConversionMode::Disabled);
+        assert_eq!(config.output.chinese_conversion, ChineseConversionMode::TraditionalTaiwan);
         assert_eq!(config.output.buffer_mode, OutputBufferMode::Temporary);
     }
 
@@ -596,14 +645,14 @@ mod tests {
     }
 
     #[test]
-    fn migrate_defaults_sets_hold_to_record() {
+    fn migrate_defaults_keeps_toggle_mode() {
         let toml_str = r#"
             [hotkeys]
             hold_to_record = false
         "#;
         let mut config: AppConfig = toml::from_str(toml_str).unwrap();
         config.migrate_defaults();
-        assert!(config.hotkeys.hold_to_record);
+        assert!(!config.hotkeys.hold_to_record);
     }
 
     #[test]
@@ -623,7 +672,7 @@ mod tests {
     fn scenario_output_rules_have_sensible_defaults() {
         let chat = ScenarioOutputRules::chat();
         assert!(chat.auto_punctuation);
-        assert!(!chat.remove_fillers);
+        assert!(chat.remove_fillers);
 
         let code = ScenarioOutputRules::code();
         assert!(code.preserve_code_symbols);
@@ -631,5 +680,233 @@ mod tests {
 
         let writing = ScenarioOutputRules::writing();
         assert!(writing.format_paragraphs);
+    }
+}
+
+
+// ---------------------------------------------------------------------------
+// v0.4 additions
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TranscriptionConfig {
+    /// "auto"（自動偵測，適合中英夾雜）、"zh"、"en"、"ja" ...
+    #[serde(default = "default_language")]
+    pub language: String,
+    /// 依錄音長度縮短 encoder 視窗（短句大幅加速）
+    #[serde(default = "default_true")]
+    pub fast_encoder: bool,
+    /// 執行緒數，0 = 自動
+    #[serde(default)]
+    pub threads: usize,
+    /// 以提示詞引導輸出繁體中文
+    #[serde(default = "default_true")]
+    pub prefer_traditional_prompt: bool,
+    /// 模型載入後先做一次暖機推論
+    #[serde(default = "default_true")]
+    pub warm_up: bool,
+}
+
+fn default_language() -> String {
+    "auto".to_string()
+}
+
+impl Default for TranscriptionConfig {
+    fn default() -> Self {
+        Self {
+            language: default_language(),
+            fast_encoder: true,
+            threads: 0,
+            prefer_traditional_prompt: true,
+            warm_up: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum InjectionMethod {
+    /// 剪貼簿 + Ctrl+V（最快、最相容，會備份並還原剪貼簿）
+    #[default]
+    Paste,
+    /// 剪貼簿 + Ctrl+Shift+V（部分終端機）
+    PasteShift,
+    /// SendInput Unicode 逐字輸入（不碰剪貼簿，適合終端機／遠端桌面）
+    Unicode,
+    /// 只複製到剪貼簿，不自動貼上
+    ClipboardOnly,
+}
+
+impl InjectionMethod {
+    pub fn all() -> [InjectionMethod; 4] {
+        [Self::Paste, Self::PasteShift, Self::Unicode, Self::ClipboardOnly]
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Paste => "貼上 (Ctrl+V)",
+            Self::PasteShift => "貼上 (Ctrl+Shift+V)",
+            Self::Unicode => "Unicode 打字",
+            Self::ClipboardOnly => "只複製",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AppRule {
+    /// 程序名稱（不分大小寫，例如 "chrome.exe"、"LINE.exe"）
+    pub process: String,
+    /// 文字送出方式；未設定時用預設值
+    #[serde(default)]
+    pub method: Option<InjectionMethod>,
+    /// 情境（聊天／寫作／程式碼），決定語氣與格式；未設定時用目前情境
+    #[serde(default)]
+    pub scenario: Option<String>,
+    /// 給 AI 潤稿的額外語氣說明，例如「正式商務 email」
+    #[serde(default)]
+    pub tone: String,
+    /// 換行要送 Shift+Enter（避免聊天軟體直接送出）
+    #[serde(default)]
+    pub newline_as_shift_enter: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct InjectionConfig {
+    #[serde(default)]
+    pub default_method: InjectionMethod,
+    /// 寫入剪貼簿後到按下 Ctrl+V 的等待（毫秒）
+    #[serde(default = "default_paste_delay_ms")]
+    pub paste_delay_ms: u64,
+    /// 貼上後多久還原剪貼簿（毫秒）；太短時慢的 App 會貼到舊內容
+    #[serde(default = "default_restore_delay_ms")]
+    pub restore_delay_ms: u64,
+    /// 放開快捷鍵時記住前景視窗，送出前若焦點改變則切回
+    #[serde(default = "default_true")]
+    pub refocus_original_window: bool,
+    #[serde(default = "default_app_rules")]
+    pub app_rules: Vec<AppRule>,
+}
+
+fn default_paste_delay_ms() -> u64 {
+    15
+}
+
+fn default_restore_delay_ms() -> u64 {
+    300
+}
+
+pub fn default_app_rules() -> Vec<AppRule> {
+    let rule = |process: &str, method: Option<InjectionMethod>, scenario: Option<&str>, shift_enter: bool| AppRule {
+        process: process.to_string(),
+        method,
+        scenario: scenario.map(str::to_string),
+        tone: String::new(),
+        newline_as_shift_enter: shift_enter,
+    };
+    vec![
+        rule("WindowsTerminal.exe", Some(InjectionMethod::Paste), Some("程式碼"), false),
+        rule("cmd.exe", Some(InjectionMethod::Unicode), Some("程式碼"), false),
+        rule("powershell.exe", Some(InjectionMethod::Unicode), Some("程式碼"), false),
+        rule("pwsh.exe", Some(InjectionMethod::Unicode), Some("程式碼"), false),
+        rule("mintty.exe", Some(InjectionMethod::PasteShift), Some("程式碼"), false),
+        rule("Code.exe", None, Some("程式碼"), false),
+        rule("Cursor.exe", None, Some("程式碼"), false),
+        rule("mstsc.exe", Some(InjectionMethod::Unicode), None, false),
+        rule("LINE.exe", Some(InjectionMethod::Paste), Some("聊天"), true),
+        rule("Slack.exe", Some(InjectionMethod::Paste), Some("聊天"), true),
+        rule("Discord.exe", Some(InjectionMethod::Paste), Some("聊天"), true),
+        rule("Teams.exe", Some(InjectionMethod::Paste), Some("聊天"), true),
+        rule("ms-teams.exe", Some(InjectionMethod::Paste), Some("聊天"), true),
+        rule("WINWORD.EXE", Some(InjectionMethod::Paste), Some("寫作"), false),
+        rule("OUTLOOK.EXE", Some(InjectionMethod::Paste), Some("寫作"), false),
+        rule("notepad.exe", Some(InjectionMethod::Paste), None, false),
+    ]
+}
+
+impl Default for InjectionConfig {
+    fn default() -> Self {
+        Self {
+            default_method: InjectionMethod::Paste,
+            paste_delay_ms: default_paste_delay_ms(),
+            restore_delay_ms: default_restore_delay_ms(),
+            refocus_original_window: true,
+            app_rules: default_app_rules(),
+        }
+    }
+}
+
+impl InjectionConfig {
+    pub fn rule_for(&self, process: Option<&str>) -> Option<&AppRule> {
+        let process = process?.rsplit(['\\', '/']).next()?;
+        self.app_rules
+            .iter()
+            .find(|rule| rule.process.trim().eq_ignore_ascii_case(process))
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AiCleanupConfig {
+    /// 預設關閉；開啟後在本地規則之後送給 LLM 潤稿
+    #[serde(default)]
+    pub enabled: bool,
+    /// OpenAI 相容 chat/completions 端點（Ollama: http://localhost:11434/v1/chat/completions）
+    #[serde(default = "default_ai_endpoint")]
+    pub endpoint: String,
+    #[serde(default = "default_ai_model")]
+    pub model: String,
+    /// API 金鑰（本機 Ollama 可留空）；也可用環境變數 SPEAKTYPE_AI_API_KEY
+    #[serde(default)]
+    pub api_key: String,
+    /// 逾時（毫秒），逾時就直接送出本地清理結果
+    #[serde(default = "default_ai_timeout_ms")]
+    pub timeout_ms: u64,
+    /// 太短的句子不送 LLM（字元數）
+    #[serde(default = "default_ai_min_chars")]
+    pub min_chars: usize,
+    /// 使用者自訂指示
+    #[serde(default)]
+    pub custom_instructions: String,
+}
+
+fn default_ai_endpoint() -> String {
+    "http://localhost:11434/v1/chat/completions".to_string()
+}
+
+fn default_ai_model() -> String {
+    "qwen2.5:3b".to_string()
+}
+
+fn default_ai_timeout_ms() -> u64 {
+    5000
+}
+
+fn default_ai_min_chars() -> usize {
+    8
+}
+
+impl Default for AiCleanupConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            endpoint: default_ai_endpoint(),
+            model: default_ai_model(),
+            api_key: String::new(),
+            timeout_ms: default_ai_timeout_ms(),
+            min_chars: default_ai_min_chars(),
+            custom_instructions: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct IndicatorConfig {
+    /// 錄音／轉錄時顯示螢幕底部的小浮動指示器
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+impl Default for IndicatorConfig {
+    fn default() -> Self {
+        Self { enabled: true }
     }
 }
