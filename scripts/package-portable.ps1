@@ -1,5 +1,5 @@
 # Builds dist\speaktype-windows-x64.zip (portable, no installer).
-param([switch]$SkipBuild)
+param([switch]$SkipBuild, [string]$Name = 'speaktype-windows-x64')
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
@@ -7,7 +7,7 @@ if (-not $SkipBuild) {
     cargo build --release --locked
     if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
 }
-$name = 'speaktype-windows-x64'
+$name = $Name
 $stage = Join-Path 'dist' $name
 Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $stage | Out-Null

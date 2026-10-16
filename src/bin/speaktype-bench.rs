@@ -39,7 +39,8 @@ fn main() {
 
     let t = Instant::now();
     let transcriber = Transcriber::new(&model, gpu).expect("model");
-    println!("model_load_ms={:.0}", ms(t));
+    println!("model_load_ms={:.0} backend={}", ms(t), transcriber.backend().label());
+    println!("system_info={}", whisper_rs::print_system_info().trim());
     let options = TranscribeOptions {
         language: config.transcription.language.clone(),
         initial_prompt: build_initial_prompt(&config.transcription, &config.output),

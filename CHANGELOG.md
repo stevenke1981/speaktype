@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.2-test — 2026-10-16
+### 修正
+- 轉錄停在「轉寫中」：背景轉錄程序 panic 時會回報錯誤並重設；介面加入逾時保護。
+- Windows CPU 版改用固定 AVX2/FMA/F16C 編譯（原為 GGML_NATIVE，依 CI 機器 CPU）；CPU 上不再啟用 flash attention。
+- GPU 偵測優先選 NVIDIA，不再顯示虛擬顯示卡；模型狀態顯示實際後端，不再在 CPU 版顯示「CUDA」。
+### 新增
+- NVIDIA CUDA 版安裝程式／免安裝版（nvcuda.dll 延遲載入，沒有 NVIDIA 驅動時改用 CPU）。
+- 記錄檔記下 whisper 後端與 CPU 指令集（system_info）。
+
 ## 0.5.1-test — 2026-10-16
 ### 修正
 - 模型下載「存取被拒」(os error 5)：設定或程式旁的模型資料夾無法寫入時（例如安裝在 `C:\Program Files`），改下載到 `%LOCALAPPDATA%\SpeakType\models`。

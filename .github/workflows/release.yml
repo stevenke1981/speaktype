@@ -17,6 +17,13 @@ jobs:
     runs-on: windows-latest
     env:
       LIBCLANG_PATH: C:\Program Files\LLVM\bin
+      # Portable x86-64 build: AVX2/FMA/F16C (any CPU since ~2013), not
+      # "native" to whatever CPU the CI runner happens to have.
+      GGML_NATIVE: "OFF"
+      GGML_AVX: "ON"
+      GGML_AVX2: "ON"
+      GGML_FMA: "ON"
+      GGML_F16C: "ON"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -25,6 +32,13 @@ jobs:
         run: cargo build --release --locked --bins
       - name: Test
         run: cargo test --release --locked
+      - name: CPU bench (ggml-base, jfk)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force bench | Out-Null
+          Invoke-WebRequest -UseBasicParsing -OutFile bench\ggml-base.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
+          Invoke-WebRequest -UseBasicParsing -OutFile bench\jfk.wav https://github.com/ggml-org/whisper.cpp/raw/master/samples/jfk.wav
+          .\target\release\speaktype-bench.exe bench\ggml-base.bin bench\jfk.wav 3
       - name: Installer
         shell: pwsh
         run: ./scripts/build-installer.ps1
@@ -62,3 +76,73 @@ jobs:
             dist/speaktype-setup-windows-x64.exe
             dist/speaktype-windows-x64.zip
             dist/SHA256SUMS.txt
+
+  windows-cuda:
+    name: Build Windows x64 (CUDA)
+    runs-on: windows-2022
+    env:
+      LIBCLANG_PATH: C:\Program Files\LLVM\bin
+      GGML_NATIVE: "OFF"
+      GGML_AVX: "ON"
+      GGML_AVX2: "ON"
+      GGML_FMA: "ON"
+      GGML_F16C: "ON"
+      CMAKE_CUDA_ARCHITECTURES: "61;75;86;89"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cuda
+      - uses: Jimver/cuda-toolkit@v0.2.24
+        id: cuda
+        with:
+          cuda: '12.6.3'
+          method: network
+          sub-packages: '["nvcc","cudart","cublas","cublas_dev","visual_studio_integration","crt","nvrtc"]'
+      - name: Build (CUDA)
+        run: cargo build --release --locked --features cuda --bins
+      - name: Bundle CUDA runtime DLLs
+        shell: pwsh
+        run: |
+          foreach ($d in 'cudart64_12.dll','cublas64_12.dll','cublasLt64_12.dll') {
+            Copy-Item (Join-Path $env:CUDA_PATH "bin\$d") target\release\
+          }
+          Get-ChildItem target\release\*.dll | Format-Table Name, Length
+      - name: Starts without NVIDIA driver (delay-load check)
+        shell: pwsh
+        run: |
+          $v = & .\target\release\speaktype.exe --version
+          if ($LASTEXITCODE -ne 0) { throw "speaktype.exe failed to start: $LASTEXITCODE" }
+          Write-Host $v
+      - name: Installer (CUDA)
+        shell: pwsh
+        run: ./scripts/build-installer.ps1 -OutputName speaktype-cuda-setup-windows-x64
+      - name: Portable zip (CUDA)
+        shell: pwsh
+        run: ./scripts/package-portable.ps1 -SkipBuild -Name speaktype-cuda-windows-x64
+      - name: Checksums
+        shell: pwsh
+        run: |
+          Get-FileHash dist\speaktype-cuda-setup-windows-x64.exe, dist\speaktype-cuda-windows-x64.zip -Algorithm SHA256 |
+            ForEach-Object { "{0}  {1}" -f $_.Hash.ToLower(), (Split-Path $_.Path -Leaf) } |
+            Set-Content -Encoding ascii dist\SHA256SUMS-cuda.txt
+          Get-Content dist\SHA256SUMS-cuda.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: speaktype-cuda-windows-x64
+          path: |
+            dist/speaktype-cuda-setup-windows-x64.exe
+            dist/speaktype-cuda-windows-x64.zip
+            dist/SHA256SUMS-cuda.txt
+          if-no-files-found: error
+      - name: Publish to GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          make_latest: ${{ !contains(github.ref_name, '-') }}
+          files: |
+            dist/speaktype-cuda-setup-windows-x64.exe
+            dist/speaktype-cuda-windows-x64.zip
+            dist/SHA256SUMS-cuda.txt
