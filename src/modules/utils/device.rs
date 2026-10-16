@@ -1,4 +1,5 @@
 use cpal::traits::{DeviceTrait, HostTrait};
+#[cfg(windows)]
 use std::process::Command;
 
 #[cfg(windows)]
@@ -33,8 +34,22 @@ impl DeviceStatus {
     }
 }
 
+static GPU_NAME: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+
+/// Query the GPU name on a background thread. `wmic`/PowerShell take 0.3–2 s
+/// (and `wmic` no longer exists on Windows 11 24H2), so this must never run on
+/// the UI thread during startup.
+pub fn prefetch_gpu_name() {
+    std::thread::spawn(|| {
+        let _ = GPU_NAME.get_or_init(query_video_controller_name);
+    });
+}
+
 fn detect_gpu(use_cuda: bool) -> String {
-    let Some(name) = query_video_controller_name() else {
+    let Some(cached) = GPU_NAME.get() else {
+        return "偵測中…".to_string();
+    };
+    let Some(name) = cached.clone() else {
         return if use_cuda {
             "未偵測到 GPU；CUDA 可能無法使用".to_string()
         } else {
@@ -63,6 +78,7 @@ fn query_video_controller_name() -> Option<String> {
     None
 }
 
+#[cfg(windows)]
 fn query_video_controller_with_wmic() -> Option<String> {
     let mut command = Command::new("wmic");
     command.args(["path", "win32_VideoController", "get", "name", "/value"]);
@@ -87,6 +103,7 @@ fn query_video_controller_with_wmic() -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
+#[cfg(windows)]
 fn query_video_controller_with_powershell() -> Option<String> {
     let mut command = Command::new("powershell");
     command.args([

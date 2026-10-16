@@ -100,38 +100,41 @@ fn final_replacement(entry: &VocabularyEntry) -> String {
 }
 
 fn apply_output_rules(text: &str, rules: &ScenarioOutputRules) -> String {
-    let mut text = text.trim().to_string();
+    use crate::modules::cleanup;
+    let mut text = cleanup::normalize_cjk_punctuation(text.trim());
+
+    if rules.resolve_self_corrections {
+        text = cleanup::resolve_self_corrections(&text);
+    }
 
     if rules.remove_fillers {
-        text = remove_fillers(&text);
+        text = cleanup::remove_fillers(&text);
     }
 
     if rules.preserve_code_symbols {
         text = preserve_code_symbols(&text);
+    } else {
+        if rules.format_lists {
+            text = cleanup::format_lists(&text);
+        }
+        if rules.cjk_spacing {
+            text = cleanup::cjk_spacing(&text);
+        }
     }
 
     if rules.auto_punctuation {
-        text = ensure_terminal_punctuation(&text);
+        text = cleanup::ensure_terminal_punctuation(&text);
     }
 
-    if rules.format_paragraphs {
-        text = format_paragraphs(&text);
-    } else if rules.auto_line_breaks {
-        text = auto_line_breaks(&text);
+    if !text.contains('\n') {
+        if rules.format_paragraphs {
+            text = format_paragraphs(&text);
+        } else if rules.auto_line_breaks {
+            text = auto_line_breaks(&text);
+        }
     }
 
     text.trim().to_string()
-}
-
-fn remove_fillers(text: &str) -> String {
-    let fillers = ["嗯", "呃", "啊", "就是", "然後", "那個", "這個", "就是說"];
-
-    fillers
-        .iter()
-        .fold(text.to_string(), |acc, filler| acc.replace(filler, ""))
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 fn preserve_code_symbols(text: &str) -> String {
@@ -153,15 +156,6 @@ fn preserve_code_symbols(text: &str) -> String {
         .replace("”", "\"")
         .replace("’", "'")
         .replace("‘", "'")
-}
-
-fn ensure_terminal_punctuation(text: &str) -> String {
-    let trimmed = text.trim();
-    if trimmed.is_empty() || trimmed.ends_with(['。', '！', '？', '.', '!', '?', ':', '：']) {
-        trimmed.to_string()
-    } else {
-        format!("{trimmed}。")
-    }
 }
 
 fn format_paragraphs(text: &str) -> String {

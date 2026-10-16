@@ -98,7 +98,10 @@ pub struct GlobalHotkey {
     hotkey_pressed: Arc<AtomicBool>,
     events: Arc<Mutex<VecDeque<HotkeyEvent>>>,
     combo: Arc<Mutex<HotkeyCombo>>,
+    waker: Waker,
 }
+
+type Waker = Arc<Mutex<Option<Box<dyn Fn() + Send + Sync>>>>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HotkeyEvent {
@@ -116,6 +119,8 @@ impl GlobalHotkey {
             HotkeyCombo::parse(record_toggle).unwrap_or_default(),
         ));
         let combo_clone = combo.clone();
+        let waker: Waker = Arc::new(Mutex::new(None));
+        let waker_clone = waker.clone();
 
         // 啟動 rdev 全域監聽器
         thread::spawn(move || {
@@ -186,6 +191,11 @@ impl GlobalHotkey {
                             log_error("hotkey event queue", err);
                         }
                     }
+                    if let Ok(waker) = waker_clone.lock() {
+                        if let Some(wake) = waker.as_ref() {
+                            wake();
+                        }
+                    }
                 }
                 hotkey_clone.store(next_combo_down, Ordering::Relaxed);
             }) {
@@ -199,6 +209,14 @@ impl GlobalHotkey {
             hotkey_pressed,
             events,
             combo,
+            waker,
+        }
+    }
+
+    /// Called from the listener thread on every hotkey edge (e.g. to repaint the UI).
+    pub fn set_waker(&mut self, wake: impl Fn() + Send + Sync + 'static) {
+        if let Ok(mut waker) = self.waker.lock() {
+            *waker = Some(Box::new(wake));
         }
     }
 

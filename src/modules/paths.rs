@@ -3,8 +3,13 @@ use std::path::PathBuf;
 const APP_DIR_NAME: &str = "SpeakType";
 
 pub fn app_base_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("SPEAKTYPE_HOME") {
+        return PathBuf::from(dir);
+    }
     std::env::var_os("LOCALAPPDATA")
+        .or_else(|| std::env::var_os("XDG_DATA_HOME"))
         .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local").join("share")))
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
         .join(APP_DIR_NAME)
 }

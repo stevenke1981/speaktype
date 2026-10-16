@@ -108,6 +108,29 @@ impl EnergyVad {
     }
 }
 
+impl EnergyVad {
+    /// Like [`trim_silence`](Self::trim_silence) but keeps `pad` samples of
+    /// context on both sides so word onsets/endings are not clipped.
+    pub fn trim_silence_padded(&mut self, samples: &mut Vec<f32>, pad: usize) {
+        self.reset_counters();
+        let segments = self.detect_speech_segments(samples);
+        let (Some(first), Some(last)) = (segments.first(), segments.last()) else {
+            samples.clear();
+            return;
+        };
+        let start = first.0.saturating_sub(pad);
+        let end = (last.1 + pad).min(samples.len());
+        if start > 0 || end < samples.len() {
+            *samples = samples[start..end].to_vec();
+        }
+    }
+
+    fn reset_counters(&mut self) {
+        self.consecutive_speech = 0;
+        self.consecutive_silence = 0;
+    }
+}
+
 impl Default for EnergyVad {
     fn default() -> Self {
         Self::new(0.02, 60, 300)
@@ -253,5 +276,24 @@ mod tests {
         }
         let segments = vad.detect_speech_segments(&samples);
         assert!(!segments.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod padded_tests {
+    use super::*;
+
+    #[test]
+    fn padded_trim_keeps_context_and_clears_silence() {
+        let mut samples = vec![0.0_f32; 16_000];
+        samples.extend(std::iter::repeat_n(0.3, 8_000));
+        samples.extend(vec![0.0_f32; 16_000]);
+        let mut vad = EnergyVad::default();
+        vad.trim_silence_padded(&mut samples, 3_200);
+        assert!(samples.len() >= 8_000 + 3_200 && samples.len() < 20_000, "{}", samples.len());
+
+        let mut silent = vec![0.0_f32; 16_000];
+        vad.trim_silence_padded(&mut silent, 3_200);
+        assert!(silent.is_empty());
     }
 }

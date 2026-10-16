@@ -15,7 +15,18 @@ pub struct ModelCatalogEntry {
     pub recommendation: &'static str,
 }
 
+/// Default model: quantized large-v3-turbo (547 MB, ~3x faster to load than the
+/// 1.6 GB fp16 file, same accuracy class).
+pub const DEFAULT_MODEL: &str = "large-v3-turbo-q5_0";
+
 pub const MODEL_CATALOG: &[ModelCatalogEntry] = &[
+    ModelCatalogEntry {
+        name: "large-v3-turbo-q5_0",
+        file_name: "ggml-large-v3-turbo-q5_0.bin",
+        label: "large-v3-turbo (量化 q5_0)",
+        approx_size: "約 547 MB",
+        recommendation: "推薦：品質接近原版，下載小、載入快",
+    },
     ModelCatalogEntry {
         name: "large-v3-turbo",
         file_name: "ggml-large-v3-turbo.bin",
@@ -36,6 +47,20 @@ pub const MODEL_CATALOG: &[ModelCatalogEntry] = &[
         label: "small",
         approx_size: "約 488 MB",
         recommendation: "速度優先，CPU 也較可用",
+    },
+    ModelCatalogEntry {
+        name: "small-q5_1",
+        file_name: "ggml-small-q5_1.bin",
+        label: "small (量化 q5_1)",
+        approx_size: "約 181 MB",
+        recommendation: "低階 CPU／筆電最快",
+    },
+    ModelCatalogEntry {
+        name: "base",
+        file_name: "ggml-base.bin",
+        label: "base",
+        approx_size: "約 142 MB",
+        recommendation: "極速、準確度較低（英文為主）",
     },
 ];
 

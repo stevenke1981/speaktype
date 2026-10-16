@@ -1,0 +1,788 @@
+// SpeakType — Slint front-end. All logic lives in Rust (src/app.rs); this file
+// lays out widgets and forwards input. Nothing here animates while idle.
+import { Button, CheckBox, ComboBox, LineEdit, Slider, SpinBox, ScrollView, TextEdit, ListView, ProgressIndicator, Palette } from "std-widgets.slint";
+
+export global Pal {
+    in property <color> bg: #F7F3EA;
+    in property <color> panel: #EEE5D6;
+    in property <color> text: #2A2620;
+    in property <color> accent: #8B6F47;
+    in property <color> hover: #E5D8C2;
+    in property <bool> dark: false;
+    out property <color> card: dark ? panel.brighter(10%) : #FFFFFF.mix(panel, 55%);
+    out property <color> text2: text.transparentize(35%);
+    out property <color> dim: text.transparentize(55%);
+    out property <color> border: text.transparentize(85%);
+    out property <color> danger: #D04A4A;
+    out property <color> ok: #2E9E5B;
+    out property <color> warn: #C98A1B;
+}
+
+export struct RuleTpl { auto-punctuation: bool, format-paragraphs: bool, remove-fillers: bool, preserve-code-symbols: bool, auto-line-breaks: bool, format-lists: bool, resolve-self-corrections: bool, cjk-spacing: bool }
+
+export struct Settings {
+    // recording / hotkey
+    gain: float,
+    hotkey: string,
+    global-hotkey: bool,
+    hold-to-record: bool,
+    fast-mode: bool,
+    // output
+    buffer-clipboard: bool,
+    auto-inject: bool,
+    manual-review: bool,
+    restore-clipboard: bool,
+    conversion: int,          // 0 none, 1 Traditional (TW), 2 Simplified (CN)
+    voice-commands: bool,
+    tpl-chat: RuleTpl,
+    tpl-writing: RuleTpl,
+    tpl-code: RuleTpl,
+    // speed / sending / AI
+    language: int,
+    fast-encoder: bool,
+    traditional-prompt: bool,
+    keep-mic-warm: bool,
+    indicator: bool,
+    default-method: int,
+    restore-delay-ms: int,
+    refocus: bool,
+    ai-enabled: bool,
+    ai-endpoint: string,
+    ai-model: string,
+    ai-key: string,
+    ai-timeout-ms: int,
+    ai-instructions: string,
+    // system
+    use-cuda: bool,
+    model-name: string,
+    models-dir: string,
+    retention-days: int,
+    max-total-mb: int,
+    theme: int,
+    launch-on-startup: bool,
+    start-hidden: bool,
+}
+
+export struct RuleRow { process: string, method: int, scenario: int, tone: string, shift-enter: bool }
+export struct VocabRow { source: string, replacement: string, protect: bool }
+export struct HistRow { idx: int, time: string, scenario: string, app: string, meta: string, text: string }
+export struct ModelRow { name: string, label: string, size: string, recommendation: string, url: string, installed: bool, current: bool, file-size: string, sha-warning: string }
+export struct RecRow { time: string, name: string, size: string, path: string }
+
+component Card inherits Rectangle {
+    in property <length> pad: 12px;
+    background: Pal.card;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: Pal.border;
+    VerticalLayout {
+        padding: root.pad;
+        spacing: 6px;
+        @children
+    }
+}
+
+component H1 inherits Text { font-size: 20px; font-weight: 700; color: Pal.accent; }
+component H2 inherits Text { font-size: 14px; font-weight: 700; color: Pal.text; }
+component H3 inherits Text { font-size: 13px; font-weight: 600; color: Pal.text; }
+component Small inherits Text { font-size: 11px; color: Pal.text2; wrap: word-wrap; }
+component Body inherits Text { color: Pal.text; wrap: word-wrap; }
+
+component Dot inherits Rectangle {
+    in property <color> c;
+    width: 8px; height: 8px; border-radius: 4px; background: c;
+}
+
+component StatusRow inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> value;
+    in property <color> c: Pal.ok;
+    spacing: 8px;
+    Dot { c: root.c; y: (parent.height - self.height) / 2; }
+    Body { text: root.label + "：" + root.value; vertical-alignment: center; }
+}
+
+component Seg inherits Rectangle {
+    in property <string> text;
+    in property <bool> selected;
+    callback clicked();
+    height: 30px;
+    min-width: 72px;
+    border-radius: 6px;
+    background: selected ? Pal.hover : ta.has-hover ? Pal.hover.transparentize(50%) : transparent;
+    Text { text: root.text; color: root.selected ? Pal.accent : Pal.text2; horizontal-alignment: center; vertical-alignment: center; font-weight: root.selected ? 700 : 400; }
+    ta := TouchArea { clicked => { root.clicked(); } }
+    accessible-role: button;
+    accessible-label: root.text;
+}
+
+component Tpl inherits VerticalLayout {
+    in-out property <RuleTpl> t;
+    callback changed-tpl();
+    spacing: 2px;
+    CheckBox { text: "自動標點"; checked <=> root.t.auto-punctuation; toggled => { root.changed-tpl(); } }
+    CheckBox { text: "整理段落"; checked <=> root.t.format-paragraphs; toggled => { root.changed-tpl(); } }
+    CheckBox { text: "去除語助詞"; checked <=> root.t.remove-fillers; toggled => { root.changed-tpl(); } }
+    CheckBox { text: "保留英文符號"; checked <=> root.t.preserve-code-symbols; toggled => { root.changed-tpl(); } }
+    CheckBox { text: "自動加換行"; checked <=> root.t.auto-line-breaks; toggled => { root.changed-tpl(); } }
+    CheckBox { text: "整理條列（第一、第二…）"; checked <=> root.t.format-lists; toggled => { root.changed-tpl(); } }
+    CheckBox { text: "修正口誤（「不對、我是說…」）"; checked <=> root.t.resolve-self-corrections; toggled => { root.changed-tpl(); } }
+    CheckBox { text: "中英文之間加空白"; checked <=> root.t.cjk-spacing; toggled => { root.changed-tpl(); } }
+}
+
+export component MainWindow inherits Window {
+    title: "SpeakType";
+    icon: @image-url("../assets/speaktype-icon.png");
+    preferred-width: 680px;
+    preferred-height: 720px;
+    min-width: 520px;
+    min-height: 480px;
+    background: Pal.bg;
+    in property <string> ui-font;
+    default-font-family: ui-font;
+    default-font-size: 13px;
+
+    changed dark-scheme => { Palette.color-scheme = root.dark-scheme ? ColorScheme.dark : ColorScheme.light; }
+    in property <bool> dark-scheme: false;
+    init => { Palette.color-scheme = root.dark-scheme ? ColorScheme.dark : ColorScheme.light; }
+
+    // navigation: 0 main, 1 settings, 2 history, 3 models, 4 recordings, 5 errors
+    in-out property <int> page: 0;
+
+    // ---- main page
+    in property <bool> tray-available;
+    in property <bool> hidden-to-tray;
+    in property <string> mic-status;
+    in property <string> gpu-status;
+    in property <string> model-status;
+    in property <int> scenario;
+    in property <string> status: "就緒";
+    in property <string> model-message;
+    in property <bool> downloading;
+    in property <float> download-progress;
+    in property <string> download-text;
+    in property <bool> download-failed;
+    in property <bool> recording;
+    in property <bool> record-enabled: true;
+    in property <string> record-hotkey;
+    in property <bool> can-retry;
+    in property <bool> can-send;
+    in property <string> last-error;
+    in property <string> draft;
+    in property <string> last-result;
+    in property <string> scratch;
+    in property <string> last-recording;
+
+    // ---- settings
+    in-out property <Settings> s;
+    in property <[RuleRow]> rules;
+    in property <[VocabRow]> vocab;
+    in property <[string]> devices;
+    in-out property <int> device-index;
+    in property <[string]> languages;
+    in property <[string]> methods;
+    in property <[string]> rule-methods;
+    in property <[string]> rule-scenarios;
+    in property <[string]> themes;
+    in property <float> input-level;
+    in property <bool> level-testing;
+    in property <bool> capturing-hotkey;
+    in property <string> latency-text;
+    in property <string> last-app;
+    in property <string> models-dir-note;
+    in property <[string]> voice-command-lines;
+
+    // ---- history
+    in property <[HistRow]> history;
+    in property <string> history-path;
+    in property <int> history-total;
+
+    // ---- models
+    in property <[ModelRow]> models;
+    in property <string> confirm-label;
+    in property <string> confirm-file;
+    in property <string> confirm-size;
+    in property <string> confirm-dir;
+
+    // ---- recordings
+    in property <[RecRow]> recordings;
+    in property <string> recordings-summary;
+    in property <string> recordings-dir;
+
+    // ---- errors
+    in property <[string]> errors;
+    in property <string> log-path;
+
+    callback action(string);
+    callback select-scenario(int);
+    callback settings-changed();
+    callback rules-changed();
+    callback rule-delete(int);
+    callback vocab-changed();
+    callback vocab-delete(int);
+    callback device-selected(int);
+    callback theme-selected(int);
+    callback hotkey-entered(string);
+    callback hotkey-captured(string, bool, bool, bool, bool);
+    callback history-search(string);
+    callback history-copy(int);
+    callback model-use(string);
+    callback model-download(string);
+    callback recordings-filter(string);
+    callback recording-play(string);
+    callback recording-retranscribe(string);
+    callback recording-delete(string);
+
+    in-out property <bool> jump-to-speed;   // screenshot hook: scroll settings to the speed section
+
+    // Hotkey capture: grabs keys while the capture button is armed.
+    capture := FocusScope {
+        enabled: root.capturing-hotkey;
+        key-pressed(e) => {
+            if (e.text == Key.Escape) { root.action("hotkey-capture-cancel"); return accept; }
+            if (e.text == Key.Control || e.text == Key.Shift || e.text == Key.Alt || e.text == Key.Meta || e.text == Key.ControlR || e.text == Key.ShiftR || e.text == Key.AltGr) { return accept; }
+            root.hotkey-captured(e.text, e.modifiers.control, e.modifiers.alt, e.modifiers.shift, e.modifiers.meta);
+            accept
+        }
+    }
+    changed capturing-hotkey => { if (root.capturing-hotkey) { capture.focus(); } }
+
+    VerticalLayout {
+        padding: 14px;
+        spacing: 10px;
+
+        // ======== header + toolbar
+        HorizontalLayout {
+            spacing: 8px;
+            if root.page != 0: Button { text: "← 返回"; clicked => { root.page = 0; } }
+            H1 { text: root.page == 1 ? "設定" : root.page == 2 ? "辨識紀錄" : root.page == 3 ? "模型管理中心" : root.page == 4 ? "錄音檔管理" : root.page == 5 ? "錯誤紀錄" : "SpeakType"; vertical-alignment: center; }
+            Rectangle { horizontal-stretch: 1; }
+            if root.hidden-to-tray: Small { text: "已隱藏到系統匣"; color: Pal.ok; vertical-alignment: center; }
+        }
+
+        if root.page == 0: Rectangle {
+            background: Pal.panel;
+            border-radius: 8px;
+            HorizontalLayout {
+                padding: 6px;
+                spacing: 6px;
+                Button { text: "紀錄"; clicked => { root.action("open-history"); } }
+                Button { text: "錄音檔"; clicked => { root.action("open-recordings"); } }
+                Button { text: "模型中心"; clicked => { root.action("open-models"); } }
+                Button { text: "設定"; clicked => { root.action("open-settings"); } }
+                Button { text: "錯誤"; clicked => { root.action("open-errors"); } }
+                Rectangle { horizontal-stretch: 1; }
+                Button { text: "重新偵測"; clicked => { root.action("refresh-devices"); } }
+                Button { text: "隱藏"; enabled: root.tray-available; clicked => { root.action("hide-to-tray"); } }
+            }
+        }
+
+        // ======== main page
+        if root.page == 0: ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                spacing: 10px;
+                alignment: start;
+                Card {
+                    H3 { text: "裝置狀態"; }
+                    StatusRow { label: "麥克風"; value: root.mic-status; c: root.mic-status == "未偵測到裝置" ? Pal.dim : Pal.ok; }
+                    StatusRow { label: "GPU"; value: root.gpu-status; c: Pal.dim; }
+                    StatusRow { label: "模型"; value: root.model-status; c: Pal.ok; }
+                }
+                Card {
+                    HorizontalLayout {
+                        alignment: start;
+                        Rectangle {
+                            background: Pal.panel;
+                            border-radius: 8px;
+                            HorizontalLayout {
+                                padding: 4px;
+                                spacing: 4px;
+                                Small { text: "情境"; vertical-alignment: center; }
+                                Seg { text: "聊天"; selected: root.scenario == 0; clicked => { root.select-scenario(0); } }
+                                Seg { text: "寫作"; selected: root.scenario == 1; clicked => { root.select-scenario(1); } }
+                                Seg { text: "程式碼"; selected: root.scenario == 2; clicked => { root.select-scenario(2); } }
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Dot { c: root.recording ? Pal.danger : root.status == "失敗" ? Pal.danger : Pal.ok; y: (parent.height - self.height) / 2; }
+                        Body { text: root.status; }
+                    }
+                    if root.model-message != "": HorizontalLayout {
+                        spacing: 8px;
+                        Dot { c: Pal.accent; y: (parent.height - self.height) / 2; }
+                        Small { text: "模型：" + root.model-message; }
+                    }
+                    if root.downloading: VerticalLayout {
+                        spacing: 4px;
+                        ProgressIndicator { progress: root.download-progress; height: 8px; }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Small { text: root.download-text; horizontal-stretch: 1; }
+                            Button { text: "取消下載"; clicked => { root.action("cancel-model"); } }
+                        }
+                    }
+                    if root.download-failed: Button { text: "重試模型準備"; clicked => { root.action("retry-model"); } }
+                    Button {
+                        height: 36px;
+                        text: (root.recording ? "■ 停止錄音 (" : "● 開始錄音 (") + root.record-hotkey + ")";
+                        enabled: root.record-enabled;
+                        primary: !root.recording;
+                        clicked => { root.action("toggle-recording"); }
+                    }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        alignment: start;
+                        Button { text: "重試上一段"; enabled: root.can-retry; clicked => { root.action("retry-last"); } }
+                        Button { text: "送出到焦點視窗"; enabled: root.can-send; clicked => { root.action("send-preview"); } }
+                    }
+                }
+                if root.last-error != "": Rectangle {
+                    background: Pal.danger.transparentize(88%);
+                    border-radius: 8px;
+                    HorizontalLayout {
+                        padding: 10px;
+                        spacing: 6px;
+                        Text { text: "⚠"; color: Pal.danger; }
+                        Text { text: root.last-error; color: Pal.danger; wrap: word-wrap; horizontal-stretch: 1; }
+                    }
+                }
+                if root.draft != "": Card {
+                    Small { text: "快速模式草稿"; }
+                    TextEdit { text: root.draft; read-only: true; height: 56px; wrap: word-wrap; }
+                }
+                if root.last-result != "": Card {
+                    Small { text: "最近辨識結果"; }
+                    TextEdit { text: root.last-result; read-only: true; height: 96px; wrap: word-wrap; }
+                    HorizontalLayout { alignment: start; Button { text: "複製"; clicked => { root.action("copy-last"); } } }
+                }
+                if root.scratch != "": Card {
+                    Small { text: "暫存區"; }
+                    TextEdit { text: root.scratch; read-only: true; height: 72px; wrap: word-wrap; }
+                }
+                if root.last-recording != "": Small { text: "最近錄音檔：" + root.last-recording; color: Pal.dim; }
+            }
+        }
+
+        // ======== settings page
+        if root.page == 1: settings-scroll := ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                spacing: 10px;
+                padding-right: 12px;
+                alignment: start;
+
+                H2 { text: "核心輸入"; }
+                Card {
+                    H3 { text: "麥克風"; }
+                    HorizontalLayout {
+                        spacing: 6px; alignment: start;
+                        Button { text: "刷新裝置"; clicked => { root.action("refresh-audio-devices"); } }
+                        Button { text: root.level-testing ? "停止音量測試" : "開始音量測試"; clicked => { root.action("toggle-level-test"); } }
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Body { text: "輸入裝置"; vertical-alignment: center; }
+                        ComboBox { model: root.devices; current-index <=> root.device-index; selected => { root.device-selected(self.current-index); } horizontal-stretch: 1; }
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Body { text: "錄音增益 " + round(root.s.gain * 10) / 10; vertical-alignment: center; min-width: 110px; }
+                        Slider { minimum: 0.2; maximum: 4.0; value <=> root.s.gain; released => { root.settings-changed(); } }
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Body { text: "即時音量"; vertical-alignment: center; }
+                        ProgressIndicator { progress: root.input-level; height: 8px; y: (parent.height - self.height) / 2; }
+                    }
+                }
+                Card {
+                    H3 { text: "PTT 快速鍵"; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Body { text: "快捷鍵"; vertical-alignment: center; }
+                        hk := LineEdit { text: root.s.hotkey; accepted(t) => { root.hotkey-entered(t); } horizontal-stretch: 1; }
+                        Button { text: root.capturing-hotkey ? "按下新的快捷鍵…（Esc 取消）" : "捕捉"; clicked => { root.action("hotkey-capture"); } }
+                    }
+                    Small { text: "可直接輸入（例如 Ctrl+Shift+L）後按 Enter，或按「捕捉」再按下組合鍵。"; }
+                    CheckBox { text: "啟用全域快捷鍵"; checked <=> root.s.global-hotkey; toggled => { root.settings-changed(); } }
+                    CheckBox { text: "按住錄音，放開後轉錄（關閉＝按一下開始、再按一下結束）"; checked <=> root.s.hold-to-record; toggled => { root.settings-changed(); } }
+                }
+                Card {
+                    H3 { text: "轉錄模式"; }
+                    CheckBox { text: "快速模式：先顯示草稿狀態，再輸出最終文字（關閉＝穩定模式）"; checked <=> root.s.fast-mode; toggled => { root.settings-changed(); } }
+                }
+
+                H2 { text: "輸出處理"; }
+                Card {
+                    H3 { text: "文字暫存"; }
+                    CheckBox { text: "保留到剪貼簿（關閉＝暫存區，不留在剪貼簿）"; checked <=> root.s.buffer-clipboard; toggled => { root.settings-changed(); } }
+                    CheckBox { text: "轉錄完成後自動注入焦點視窗"; checked <=> root.s.auto-inject; toggled => { root.settings-changed(); } }
+                    CheckBox { text: "輸出前先預覽，手動確認後送出"; checked <=> root.s.manual-review; toggled => { root.settings-changed(); } }
+                    CheckBox { text: "暫存區注入後還原原本剪貼簿文字"; enabled: !root.s.buffer-clipboard; checked <=> root.s.restore-clipboard; toggled => { root.settings-changed(); } }
+                }
+                Card {
+                    H3 { text: "簡繁與用語轉換"; }
+                    ComboBox { model: ["不轉換", "輸出繁體（台灣用語）", "輸出簡體（中國大陸用語）"]; current-index <=> root.s.conversion; selected => { root.settings-changed(); } }
+                }
+                Card {
+                    H3 { text: "自訂詞庫 / 專有名詞"; }
+                    Small { text: "左欄是辨識可能出現的文字，右欄是要輸出的正式寫法；勾選「保護」可避免被其他規則改動。"; }
+                    for v[i] in root.vocab: HorizontalLayout {
+                        spacing: 6px;
+                        LineEdit { placeholder-text: "辨識文字"; text <=> v.source; edited => { root.vocab-changed(); } }
+                        LineEdit { placeholder-text: "輸出寫法"; text <=> v.replacement; edited => { root.vocab-changed(); } }
+                        CheckBox { text: "保護"; checked <=> v.protect; toggled => { root.vocab-changed(); } }
+                        Button { text: "刪除"; clicked => { root.vocab-delete(i); } }
+                    }
+                    HorizontalLayout {
+                        spacing: 6px; alignment: start;
+                        Button { text: "＋ 新增詞彙"; clicked => { root.action("vocab-add"); } }
+                        Button { text: "清除空白列"; clicked => { root.action("vocab-prune"); } }
+                    }
+                }
+                Card {
+                    H3 { text: "輸出規則模板"; }
+                    HorizontalLayout {
+                        spacing: 12px;
+                        VerticalLayout { H3 { text: "聊天"; } Tpl { t <=> root.s.tpl-chat; changed-tpl => { root.settings-changed(); } } }
+                        VerticalLayout { H3 { text: "寫作"; } Tpl { t <=> root.s.tpl-writing; changed-tpl => { root.settings-changed(); } } }
+                        VerticalLayout { H3 { text: "程式碼"; } Tpl { t <=> root.s.tpl-code; changed-tpl => { root.settings-changed(); } } }
+                    }
+                }
+                Card {
+                    H3 { text: "語音指令"; }
+                    CheckBox { text: "啟用語音指令（說「刪掉」「換行」「句號」等執行對應動作）"; checked <=> root.s.voice-commands; toggled => { root.settings-changed(); } }
+                    if root.s.voice-commands: VerticalLayout {
+                        padding-left: 16px;
+                        for line in root.voice-command-lines: Small { text: line; }
+                    }
+                }
+
+                speed-anchor := H2 { text: "速度、送出與 AI"; }
+                Timer {
+                    interval: 200ms;
+                    running: root.jump-to-speed;
+                    triggered => { settings-scroll.content-y = -speed-anchor.y; root.jump-to-speed = false; }
+                }
+                Card {
+                    H3 { text: "辨識"; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Body { text: "語言"; vertical-alignment: center; }
+                        ComboBox { model: root.languages; current-index <=> root.s.language; selected => { root.settings-changed(); } horizontal-stretch: 1; }
+                    }
+                    CheckBox { text: "短句加速（依錄音長度縮短運算視窗）"; checked <=> root.s.fast-encoder; toggled => { root.settings-changed(); } }
+                    CheckBox { text: "引導輸出繁體中文"; checked <=> root.s.traditional-prompt; toggled => { root.settings-changed(); } }
+                    CheckBox { text: "麥克風常駐（按下即錄、保留 0.3 秒預錄；Windows 會持續顯示麥克風使用中）"; checked <=> root.s.keep-mic-warm; toggled => { root.settings-changed(); } }
+                    CheckBox { text: "錄音時顯示浮動指示器"; checked <=> root.s.indicator; toggled => { root.settings-changed(); } }
+                    if root.latency-text != "": Small { text: "上次延遲：" + root.latency-text; }
+                }
+                Card {
+                    H3 { text: "文字送出"; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Body { text: "預設方式"; vertical-alignment: center; }
+                        ComboBox { model: root.methods; current-index <=> root.s.default-method; selected => { root.settings-changed(); } horizontal-stretch: 1; }
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Body { text: "還原剪貼簿延遲 (ms)"; vertical-alignment: center; }
+                        SpinBox { minimum: 50; maximum: 3000; step-size: 50; value <=> root.s.restore-delay-ms; edited => { root.settings-changed(); } }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+                    CheckBox { text: "送出前切回原本的視窗"; checked <=> root.s.refocus; toggled => { root.settings-changed(); } }
+                    Small { text: "各 App 規則（程序名稱 → 送出方式／情境／語氣（AI）／換行用 Shift+Enter）"; }
+                    for r[i] in root.rules: HorizontalLayout {
+                        spacing: 4px;
+                        LineEdit { placeholder-text: "程序.exe"; text <=> r.process; edited => { root.rules-changed(); } min-width: 120px; horizontal-stretch: 2; }
+                        ComboBox { model: root.rule-methods; current-index <=> r.method; selected => { root.rules-changed(); } min-width: 130px; horizontal-stretch: 2; }
+                        ComboBox { model: root.rule-scenarios; current-index <=> r.scenario; selected => { root.rules-changed(); } min-width: 90px; horizontal-stretch: 1; }
+                        LineEdit { placeholder-text: "語氣"; text <=> r.tone; edited => { root.rules-changed(); } min-width: 60px; horizontal-stretch: 1; }
+                        CheckBox { text: "Shift+Enter"; checked <=> r.shift-enter; toggled => { root.rules-changed(); } }
+                        Button { text: "刪除"; clicked => { root.rule-delete(i); } }
+                    }
+                    HorizontalLayout {
+                        spacing: 6px; alignment: start;
+                        Button { text: "＋ 新增規則"; clicked => { root.action("rule-add"); } }
+                        if root.last-app != "": Button { text: "加入上次輸入的 App（" + root.last-app + "）"; clicked => { root.action("rule-add-last-app"); } }
+                        Button { text: "還原預設規則"; clicked => { root.action("rule-reset"); } }
+                    }
+                }
+                Card {
+                    H3 { text: "AI 潤稿（選用）"; }
+                    CheckBox { text: "啟用：用 LLM 去除贅字、修正口誤、整理格式（失敗或逾時會直接送出本地整理結果）"; checked <=> root.s.ai-enabled; toggled => { root.settings-changed(); } }
+                    GridLayout {
+                        spacing: 6px;
+                        Row { Body { text: "端點"; vertical-alignment: center; } LineEdit { enabled: root.s.ai-enabled; text <=> root.s.ai-endpoint; edited => { root.settings-changed(); } } }
+                        Row { Body { text: "模型"; vertical-alignment: center; } LineEdit { enabled: root.s.ai-enabled; text <=> root.s.ai-model; edited => { root.settings-changed(); } } }
+                        Row { Body { text: "API 金鑰"; vertical-alignment: center; } LineEdit { enabled: root.s.ai-enabled; input-type: password; text <=> root.s.ai-key; edited => { root.settings-changed(); } } }
+                        Row { Body { text: "逾時 (ms)"; vertical-alignment: center; } SpinBox { enabled: root.s.ai-enabled; minimum: 500; maximum: 30000; step-size: 500; value <=> root.s.ai-timeout-ms; edited => { root.settings-changed(); } } }
+                        Row { Body { text: "自訂指示"; vertical-alignment: center; } TextEdit { enabled: root.s.ai-enabled; height: 54px; text <=> root.s.ai-instructions; edited => { root.settings-changed(); } } }
+                    }
+                    HorizontalLayout {
+                        spacing: 6px; alignment: start;
+                        Button { text: "本機 Ollama"; enabled: root.s.ai-enabled; clicked => { root.action("ai-preset-ollama"); } }
+                        Button { text: "OpenAI"; enabled: root.s.ai-enabled; clicked => { root.action("ai-preset-openai"); } }
+                        Button { text: "Groq"; enabled: root.s.ai-enabled; clicked => { root.action("ai-preset-groq"); } }
+                    }
+                    Small { text: "金鑰以純文字存在 config.toml；也可改用環境變數 SPEAKTYPE_AI_API_KEY。"; }
+                }
+
+                H2 { text: "系統設定"; }
+                Card {
+                    H3 { text: "模型"; }
+                    Small { text: root.models-dir-note; }
+                    CheckBox { text: "啟用 CUDA 推論"; checked <=> root.s.use-cuda; toggled => { root.settings-changed(); root.action("reload-model"); } }
+                    HorizontalLayout { spacing: 8px; Body { text: "名稱"; vertical-alignment: center; } LineEdit { text <=> root.s.model-name; edited => { root.settings-changed(); } } }
+                    HorizontalLayout { spacing: 8px; Body { text: "目錄"; vertical-alignment: center; } LineEdit { text <=> root.s.models-dir; edited => { root.settings-changed(); } } }
+                    HorizontalLayout { alignment: start; Button { text: "重新載入目前模型"; clicked => { root.action("reload-model"); } } }
+                }
+                Card {
+                    H3 { text: "錄音檔保留"; }
+                    HorizontalLayout {
+                        spacing: 8px; alignment: start;
+                        Body { text: "保留天數"; vertical-alignment: center; }
+                        SpinBox { minimum: 0; maximum: 3650; value <=> root.s.retention-days; edited => { root.settings-changed(); } }
+                        Body { text: "上限 (MB)"; vertical-alignment: center; }
+                        SpinBox { minimum: 0; maximum: 1048576; step-size: 128; value <=> root.s.max-total-mb; edited => { root.settings-changed(); } }
+                    }
+                    HorizontalLayout { alignment: start; Button { text: "立即清理超出限制的錄音檔"; clicked => { root.action("cleanup-recordings"); } } }
+                }
+                Card {
+                    H3 { text: "外觀主題"; }
+                    ComboBox { model: root.themes; current-index <=> root.s.theme; selected => { root.theme-selected(self.current-index); } }
+                }
+                Card {
+                    H3 { text: "Windows 啟動"; }
+                    CheckBox { text: "登入 Windows 後自動啟動"; checked <=> root.s.launch-on-startup; toggled => { root.settings-changed(); root.action("apply-startup"); } }
+                    CheckBox { text: "自動啟動時直接進入系統匣"; checked <=> root.s.start-hidden; toggled => { root.settings-changed(); root.action("apply-startup"); } }
+                }
+                Card {
+                    H3 { text: "診斷"; }
+                    HorizontalLayout { alignment: start; Button { text: "匯出診斷包"; clicked => { root.action("export-diagnostics"); } } }
+                    Small { text: "診斷包會包含設定、log、最近錯誤、裝置與模型資訊；不包含錄音內容。"; }
+                }
+                Small { text: "設定變更會立即儲存。"; }
+            }
+        }
+
+        // ======== history page
+        if root.page == 2: VerticalLayout {
+            spacing: 8px;
+            vertical-stretch: 1;
+            if root.history-path != "": Small { text: "紀錄檔：" + root.history-path; }
+            HorizontalLayout {
+                spacing: 8px;
+                Body { text: "搜尋"; vertical-alignment: center; }
+                LineEdit { placeholder-text: "文字或 App 名稱"; edited(t) => { root.history-search(t); } horizontal-stretch: 1; }
+                Button { text: "清除紀錄"; enabled: root.history-total > 0; clicked => { root.action("history-clear"); } }
+            }
+            if root.history-total == 0: Body { text: "尚無紀錄"; color: Pal.text2; }
+            ListView {
+                vertical-stretch: 1;
+                for h in root.history: VerticalLayout {
+                    padding-bottom: 8px;
+                    padding-right: 10px;
+                    Card {
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Small { text: h.time; vertical-alignment: center; }
+                            Small { text: "[" + h.scenario + "]"; color: Pal.accent; vertical-alignment: center; }
+                            Small { text: h.app; vertical-alignment: center; }
+                            Rectangle { horizontal-stretch: 1; }
+                            Small { text: h.meta; vertical-alignment: center; }
+                            Button { text: "複製"; clicked => { root.history-copy(h.idx); } }
+                        }
+                        Body { text: h.text; }
+                    }
+                }
+            }
+        }
+
+        // ======== models page
+        if root.page == 3: ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                spacing: 8px;
+                padding-right: 12px;
+                alignment: start;
+                Small { text: root.models-dir-note; }
+                Small { text: "下載時會使用遠端 ETag 可用資訊做驗證；大型模型不會在 GUI 開啟時即時計算 SHA256。"; color: Pal.dim; }
+                for m in root.models: Card {
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text { text: m.label; font-size: 15px; color: Pal.text; }
+                        if m.current: Small { text: "目前使用"; color: Pal.ok; vertical-alignment: center; }
+                        Rectangle { horizontal-stretch: 1; }
+                        Small { text: m.size; vertical-alignment: center; }
+                    }
+                    Small { text: m.recommendation; }
+                    Small { text: "URL：" + m.url; color: Pal.dim; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Small { text: m.installed ? "已安裝" : "未下載"; color: m.installed ? Pal.ok : Pal.warn; }
+                        Small { text: m.file-size; }
+                    }
+                    if m.sha-warning != "": Text { text: "⚠ SHA256 校驗不一致：" + m.sha-warning; color: Pal.danger; wrap: word-wrap; }
+                    HorizontalLayout {
+                        spacing: 6px; alignment: start;
+                        Button { text: "使用此模型"; primary: true; clicked => { root.model-use(m.name); } }
+                        Button { text: m.installed ? "重新下載" : "下載"; clicked => { root.model-download(m.name); } }
+                    }
+                }
+            }
+        }
+
+        // ======== recordings page
+        if root.page == 4: VerticalLayout {
+            spacing: 8px;
+            vertical-stretch: 1;
+            Small { text: "資料夾：" + root.recordings-dir; }
+            HorizontalLayout {
+                spacing: 8px;
+                Body { text: "日期篩選"; vertical-alignment: center; }
+                LineEdit { placeholder-text: "例如 2026-10"; edited(t) => { root.recordings-filter(t); } horizontal-stretch: 1; }
+                Button { text: "開啟資料夾"; clicked => { root.action("open-recordings-folder"); } }
+            }
+            Small { text: root.recordings-summary; }
+            ListView {
+                vertical-stretch: 1;
+                for r in root.recordings: VerticalLayout {
+                    padding-bottom: 8px;
+                    padding-right: 10px;
+                    Card {
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Small { text: r.time; vertical-alignment: center; }
+                            Body { text: r.name; font-family: "monospace"; vertical-alignment: center; }
+                            Rectangle { horizontal-stretch: 1; }
+                            Small { text: r.size; vertical-alignment: center; }
+                        }
+                        HorizontalLayout {
+                            spacing: 6px; alignment: start;
+                            Button { text: "播放"; clicked => { root.recording-play(r.path); } }
+                            Button { text: "重新轉錄"; clicked => { root.recording-retranscribe(r.path); } }
+                            Button { text: "刪除"; clicked => { root.recording-delete(r.path); } }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ======== errors page
+        if root.page == 5: VerticalLayout {
+            spacing: 8px;
+            vertical-stretch: 1;
+            Small { text: "Log 檔案：" + root.log-path; }
+            if root.errors.length == 0: Body { text: "目前沒有錯誤紀錄"; color: Pal.text2; }
+            ListView {
+                vertical-stretch: 1;
+                for e in root.errors: VerticalLayout {
+                    padding-bottom: 6px;
+                    padding-right: 10px;
+                    Card { HorizontalLayout { spacing: 8px; Text { text: "⚠"; color: Pal.danger; } Body { text: e; horizontal-stretch: 1; } } }
+                }
+            }
+            HorizontalLayout { alignment: start; Button { text: "清除畫面紀錄"; enabled: root.errors.length > 0; clicked => { root.action("errors-clear"); } } }
+        }
+    }
+
+    // ======== download confirmation (modal overlay on the models page)
+    if root.confirm-label != "": Rectangle {
+        background: #0006;
+        TouchArea { }
+        Rectangle {
+            width: min(420px, root.width - 40px);
+            height: dlg.preferred-height;
+            background: Pal.bg;
+            border-radius: 12px;
+            drop-shadow-blur: 16px;
+            drop-shadow-color: #0005;
+            dlg := VerticalLayout {
+                padding: 16px;
+                spacing: 8px;
+                H3 { text: "確定要下載模型「" + root.confirm-label + "」嗎？"; wrap: word-wrap; font-size: 15px; }
+                Small { text: "檔名：" + root.confirm-file; }
+                Small { text: "大小：" + root.confirm-size; }
+                Small { text: "下載位置：" + root.confirm-dir; }
+                Small { text: "下載過程中請勿關閉應用程式。大型模型可能需要數分鐘。"; color: Pal.warn; }
+                HorizontalLayout {
+                    spacing: 8px; alignment: end;
+                    Button { text: "取消"; clicked => { root.action("download-cancel-confirm"); } }
+                    Button { text: "確定下載"; primary: true; clicked => { root.action("download-confirm"); } }
+                }
+            }
+        }
+    }
+}
+
+// Floating recording indicator: its own small, frameless, transparent,
+// always-on-top window that never takes focus (see indicator.rs). The window is
+// exactly the size of the pill, so nothing is drawn around it.
+export component IndicatorWindow inherits Window {
+    title: "SpeakType indicator";
+    no-frame: true;
+    always-on-top: true;
+    background: transparent;
+    width: 184px;
+    height: 40px;
+    in property <string> ui-font;
+    default-font-family: ui-font;
+    in property <bool> recording;
+    in property <string> elapsed;
+    in property <float> level;
+    in property <float> phase;   // advanced by a Rust timer only while the pill is visible
+
+    pill := Rectangle {
+        border-radius: self.height / 2;
+        background: #141418e8;
+        border-width: 1px;
+        border-color: #ffffff22;
+        if root.recording: HorizontalLayout {
+            padding-left: 14px;
+            padding-right: 14px;
+            spacing: 10px;
+            Rectangle {
+                width: 12px;
+                Rectangle {
+                    width: 10px * (0.75 + 0.25 * abs(sin(root.phase * 6.0 * 1rad)) + min(root.level, 0.5));
+                    height: self.width;
+                    border-radius: self.width / 2;
+                    background: #EB4040;
+                }
+            }
+            HorizontalLayout {
+                spacing: 3px;
+                alignment: center;
+                for i in 12: Rectangle {
+                    width: 3px;
+                    Rectangle {
+                        width: 3px;
+                        height: 4px + 16px * abs(sin((root.phase * 7.0 + i * 0.7) * 1rad)) * (0.3 + min(root.level, 1.0));
+                        border-radius: 1.5px;
+                        background: #DCDCDC;
+                    }
+                }
+            }
+            Text { text: root.elapsed; color: #E6E6E6; font-size: 13px; vertical-alignment: center; horizontal-alignment: right; min-width: 40px; }
+        }
+        if !root.recording: HorizontalLayout {
+            padding-left: 16px;
+            padding-right: 16px;
+            spacing: 8px;
+            for i in 3: Rectangle {
+                width: 8px;
+                Rectangle {
+                    width: 8px; height: 8px; border-radius: 4px;
+                    background: #FFFFFF;
+                    opacity: 0.25 + 0.75 * (sin((root.phase * 4.0 - i * 0.6) * 1rad) * 0.5 + 0.5);
+                }
+            }
+            Rectangle { horizontal-stretch: 1; }
+            Text { text: "轉寫中"; color: #E6E6E6; font-size: 13px; vertical-alignment: center; }
+        }
+    }
+}

@@ -2,7 +2,7 @@
 
 [package]
 name = "speaktype"
-version = "0.3.1"
+version = "0.5.1"
 edition = "2021"
 
 [lints.rust]
@@ -13,25 +13,47 @@ all = { level = "warn", priority = -1 }
 unwrap_used = "allow"
 bool_to_int_with_if = "allow"
 
+[features]
+default = []
+# NVIDIA GPU inference (needs the CUDA toolkit at build time and its DLLs at run time).
+cuda = ["whisper-rs/cuda"]
+# Any GPU via Vulkan (NVIDIA / AMD / Intel); needs the Vulkan SDK at build time.
+vulkan = ["whisper-rs/vulkan"]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "unwind"
+
 [dependencies]
-eframe = "0.27"
-egui = "0.27"
+slint = { version = "1.18.1", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-software", "software-renderer-systemfonts", "unstable-winit-030"] }
+png = "0.17"
 cpal = "0.15"
 enigo = "0.1"
 arboard = "3.6"
-whisper-rs = { version = "0.16", features = ["cuda"] }  # CUDA build for local whisper.cpp inference
+whisper-rs = { version = "0.16" }  # CPU by default; `--features cuda` / `vulkan` for GPU
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 toml = "0.8"
 reqwest = { version = "0.12", features = ["blocking"] }
-tray-icon = { version = "0.24", default-features = false }
 device_query = "2.0"
 rdev = "0.5"
 chrono = { version = "0.4", features = ["serde"] }
 hound = "3.5"
 ferrous-opencc = "0.4"
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_DataExchange", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_System_Console"] }
+
+[target.'cfg(windows)'.dependencies]
+# Windows: Skia (falls back to the software renderer at runtime, see main.rs).
+slint = { version = "1.18.1", default-features = false, features = ["renderer-skia"] }
+tray-icon = { version = "0.24", default-features = false }
+
+[target.'cfg(not(windows))'.dependencies]
+tray-icon = { version = "0.24" }
 
 [build-dependencies]
+slint-build = "1.18.1"
 winresource = "0.1"

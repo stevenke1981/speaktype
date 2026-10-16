@@ -2,6 +2,8 @@ use crate::modules::error::log_error;
 #[cfg(not(windows))]
 use crate::modules::icon::load_app_icon;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
+use std::sync::mpsc::{self, Receiver};
+use std::sync::Arc;
 use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 pub const TRAY_SHOW_MAIN: &str = "speaktype.tray.show_main";
@@ -12,7 +14,11 @@ pub const TRAY_EXIT: &str = "speaktype.tray.exit";
 
 pub struct TrayManager {
     _icon: TrayIcon,
+    actions: Receiver<TrayAction>,
 }
+
+/// Wakes the UI thread when a tray event arrives (no polling while idle).
+pub type TrayWaker = Arc<dyn Fn() + Send + Sync>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayAction {
@@ -24,7 +30,7 @@ pub enum TrayAction {
 }
 
 impl TrayManager {
-    pub fn new() -> Result<Self, String> {
+    pub fn new(wake: TrayWaker) -> Result<Self, String> {
         let menu = Menu::new();
         let show_main = MenuItem::with_id(TRAY_SHOW_MAIN, "顯示主視窗", true, None);
         let toggle = MenuItem::with_id(TRAY_TOGGLE_RECORDING, "開始 / 停止錄音", true, None);
@@ -49,37 +55,43 @@ impl TrayManager {
             .build()
             .map_err(|err| err.to_string())?;
 
-        Ok(Self { _icon: icon })
+        let (tx, actions) = mpsc::channel();
+        {
+            let tx = tx.clone();
+            let wake = wake.clone();
+            MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
+                if let Some(action) = action_from_menu_id(event.id.as_ref()) {
+                    let _ = tx.send(action);
+                    wake();
+                }
+            }));
+        }
+        TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
+            if matches!(
+                event,
+                TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. }
+                    | TrayIconEvent::DoubleClick { button: MouseButton::Left, .. }
+            ) {
+                let _ = tx.send(TrayAction::ShowMain);
+                wake();
+            }
+        }));
+
+        Ok(Self { _icon: icon, actions })
     }
 
     pub fn poll_action(&self) -> Option<TrayAction> {
-        while let Ok(event) = MenuEvent::receiver().try_recv() {
-            if let Some(action) = action_from_menu_id(event.id.as_ref()) {
-                return Some(action);
-            }
-        }
-
-        while let Ok(event) = TrayIconEvent::receiver().try_recv() {
-            match event {
-                TrayIconEvent::Click {
-                    button: MouseButton::Left,
-                    button_state: MouseButtonState::Up,
-                    ..
-                }
-                | TrayIconEvent::DoubleClick {
-                    button: MouseButton::Left,
-                    ..
-                } => return Some(TrayAction::ShowMain),
-                _ => {}
-            }
-        }
-
-        None
+        self.actions.try_recv().ok()
     }
 }
 
-pub fn create_tray() -> Option<TrayManager> {
-    match TrayManager::new() {
+pub fn create_tray(wake: TrayWaker) -> Option<TrayManager> {
+    // The tray is Windows-only; on Linux tray-icon needs a GTK main loop that
+    // the winit event loop does not run, so skip it there (Linux builds are for CI/dev only).
+    if cfg!(not(windows)) {
+        return None;
+    }
+    match TrayManager::new(wake) {
         Ok(tray) => Some(tray),
         Err(err) => {
             log_error("tray init", err);

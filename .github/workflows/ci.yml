@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [test, master]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    name: Linux build, tests, latency bench, screenshots
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config cmake clang libclang-dev \
+            libasound2-dev libgtk-3-dev libxdo-dev libxtst-dev libxi-dev libxkbcommon-dev \
+            libxkbcommon-x11-0 libgl1-mesa-dev fonts-noto-cjk xvfb imagemagick libayatana-appindicator3-1
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build (release)
+        run: cargo build --release --locked --bins
+      - name: Test
+        run: cargo test --release --locked
+      - name: Latency bench (ggml-base, CPU)
+        run: |
+          mkdir -p bench
+          curl -sL -o bench/ggml-base.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
+          curl -sL -o bench/jfk.wav https://github.com/ggml-org/whisper.cpp/raw/master/samples/jfk.wav
+          ./target/release/speaktype-bench bench/ggml-base.bin bench/jfk.wav 3 | tee bench/latency-linux.txt
+      - name: GUI screenshots (Xvfb)
+        run: ./scripts/linux-screenshots.sh target/release/speaktype linux-shots
+      - name: Idle CPU (Xvfb)
+        run: ./scripts/linux-idle-cpu.sh target/release/speaktype 30 | tee linux-shots/idle-cpu-linux.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-evidence
+          path: |
+            linux-shots/*.png
+            linux-shots/*.txt
+            bench/latency-linux.txt
+
+  windows:
+    name: Windows build, tests, installer, screenshots
+    runs-on: windows-latest
+    env:
+      LIBCLANG_PATH: C:\Program Files\LLVM\bin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build (release)
+        run: cargo build --release --locked --bins
+      - name: Test
+        run: cargo test --release --locked -- --test-threads=1
+      - name: Version
+        run: target\release\speaktype.exe --version
+      - name: GUI screenshots + startup time
+        shell: pwsh
+        run: ./scripts/win-screenshot.ps1
+      - name: Idle CPU (GUI open, tray active)
+        shell: pwsh
+        run: ./scripts/win-idle-cpu.ps1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-gui-screenshots
+          path: |
+            win-screenshot.png
+            win-shots/*
+      - name: Build Windows installer (Inno Setup)
+        shell: pwsh
+        run: ./scripts/build-installer.ps1
+      - name: Installer smoke test (silent install / uninstall)
+        shell: pwsh
+        env:
+          SMOKE_GUI: '1'
+        run: ./scripts/installer-smoke.ps1
+      - name: Portable zip
+        shell: pwsh
+        run: ./scripts/package-portable.ps1 -SkipBuild
+      - uses: actions/upload-artifact@v4
+        with:
+          name: speaktype-windows-x64
+          path: |
+            dist/speaktype-setup-windows-x64.exe
+            dist/speaktype-windows-x64.zip
+          if-no-files-found: error

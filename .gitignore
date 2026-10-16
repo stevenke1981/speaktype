@@ -12,3 +12,5 @@ Thumbs.db
 .opencode/
 .codebase-memory/
 ${PROJECT_ROOT}/
+/SpeakType/
+/dist/
