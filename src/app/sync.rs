@@ -39,6 +39,7 @@ impl App {
             ai_timeout_ms: c.ai_cleanup.timeout_ms.min(i32::MAX as u64) as i32,
             ai_instructions: ss(&c.ai_cleanup.custom_instructions),
             use_cuda: c.use_cuda,
+            gpu_mode: c.gpu_mode().index(),
             model_name: ss(c.get_model_name()),
             models_dir: ss(c.get_models_dir()),
             retention_days: c.recording.retention_days.min(i32::MAX as u32) as i32,
@@ -91,7 +92,7 @@ impl App {
         c.ai_cleanup.api_key = s.ai_key.to_string();
         c.ai_cleanup.timeout_ms = s.ai_timeout_ms.clamp(500, 30000) as u64;
         c.ai_cleanup.custom_instructions = s.ai_instructions.to_string();
-        c.use_cuda = s.use_cuda;
+        c.set_gpu_mode(speaktype::modules::config::GpuMode::from_index(s.gpu_mode));
         c.model_name = Some(s.model_name.to_string());
         c.models_dir = Some(s.models_dir.to_string());
         c.recording.retention_days = s.retention_days.max(0) as u32;

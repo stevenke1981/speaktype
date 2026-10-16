@@ -98,6 +98,16 @@ impl Transcriber {
     pub fn new(model_path: &Path, prefer_gpu: bool) -> Result<Self, String> {
         let backend = choose_backend(prefer_gpu, built_with_cuda(), nvidia_driver_present());
         let use_gpu = backend == Backend::Cuda;
+        if prefer_gpu && !use_gpu {
+            crate::modules::error::log_error(
+                "whisper backend",
+                if !built_with_cuda() {
+                    "此版本為 CPU 版，無法使用 GPU；請安裝 speaktype-cuda 版本".to_string()
+                } else {
+                    "找不到 NVIDIA 驅動程式 (nvcuda.dll)，改用 CPU".to_string()
+                },
+            );
+        }
         // flash attention only helps on the GPU; on the CPU it was being
         // enabled whenever the "CUDA" switch was on, even in CPU-only builds.
         let params = WhisperContextParameters { use_gpu, flash_attn: use_gpu, ..Default::default() };

@@ -54,6 +54,7 @@ export struct Settings {
     ai-instructions: string,
     // system
     use-cuda: bool,
+    gpu-mode: int,
     model-name: string,
     models-dir: string,
     retention-days: int,
@@ -535,7 +536,7 @@ export component MainWindow inherits Window {
                 Card {
                     H3 { text: "模型"; }
                     Small { text: root.models-dir-note; }
-                    CheckBox { text: "啟用 CUDA 推論"; checked <=> root.s.use-cuda; toggled => { root.settings-changed(); root.action("reload-model"); } }
+                    HorizontalLayout { spacing: 8px; Text { text: "辨識硬體"; vertical-alignment: center; } ComboBox { model: ["自動（有 NVIDIA GPU 就用）", "GPU (CUDA)", "CPU"]; current-index <=> root.s.gpu-mode; selected => { root.settings-changed(); root.action("reload-model"); } horizontal-stretch: 1; } }
                     HorizontalLayout { spacing: 8px; Body { text: "名稱"; vertical-alignment: center; } LineEdit { text <=> root.s.model-name; edited => { root.settings-changed(); } } }
                     HorizontalLayout { spacing: 8px; Body { text: "目錄"; vertical-alignment: center; } LineEdit { text <=> root.s.models-dir; edited => { root.settings-changed(); } } }
                     HorizontalLayout { alignment: start; Button { text: "重新載入目前模型"; clicked => { root.action("reload-model"); } } }
