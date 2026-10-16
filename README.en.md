@@ -4,14 +4,40 @@
 
 Local voice typing for Windows: hold a hotkey, speak, release — the text appears in whatever app has the cursor (Chrome, Office, Notepad, LINE, terminals…). Speech recognition runs locally with [whisper.cpp](https://github.com/ggml-org/whisper.cpp); AI cleanup is optional and can use a local Ollama server or a cloud API.
 
-## Download
+![Main window](docs/images/win-main.png)
+
+📖 User guide: [docs/USER_GUIDE.en.md](docs/USER_GUIDE.en.md) · Changelog: [CHANGELOG.md](CHANGELOG.md)
+
+> Latest build: **v0.5.1-test** (prerelease from the `test` branch), Windows x64 only.
+
+## Download & install
 
 From [Releases](https://github.com/stevenke1981/speaktype/releases):
 
-- `speaktype-setup-windows-x64.exe` — installer (Traditional Chinese / English, optional "install for me only" without admin rights, optional start at sign-in)
-- `speaktype-windows-x64.zip` — portable build
+- `speaktype-setup-windows-x64.exe` — installer (recommended; zh-TW / English, "install for me only" without admin, optional start at sign-in)
+- `speaktype-windows-x64.zip` — portable build, run `speaktype.exe`
+- `SHA256SUMS.txt` — checksums. Verify: `Get-FileHash .\speaktype-setup-windows-x64.exe -Algorithm SHA256`
 
-On first start the speech model is downloaded (default `large-v3-turbo` q5_0, about 547 MB) to `%LOCALAPPDATA%\SpeakType\models`.
+The binaries are not code-signed, so SmartScreen may warn ("More info → Run anyway").
+
+## Quick start
+
+1. Start SpeakType.
+2. Download a speech model in the Model Center (default `large-v3-turbo` q5_0, about 547 MB).
+3. Click into any text field, hold `Ctrl+Shift+L`, speak, release.
+
+## Models
+
+New models are downloaded from Hugging Face to `%LOCALAPPDATA%\SpeakType\models`. Since v0.5.1, if the configured folder is not writable (e.g. under `C:\Program Files`) SpeakType falls back to that per-user folder; models already present in old locations (configured folder, `models\` next to the exe) are still used.
+
+| Model | Size | Notes |
+|---|---|---|
+| large-v3-turbo (q5_0) — default | ~547 MB | near full quality, fast to load |
+| large-v3-turbo | ~1.6 GB | best quality, NVIDIA GPU recommended |
+| medium | ~1.5 GB | balanced |
+| small | ~488 MB | faster |
+| small (q5_1) | ~181 MB | fastest on low-end CPUs |
+| base | ~142 MB | very fast, lower accuracy (mainly English) |
 
 ## Usage
 
@@ -68,6 +94,20 @@ Hotkey release → text sent, 8-core CPU without GPU, 11–13 s clips:
 | base, English | 3.4–3.6 s (forced to Chinese, wrong output) | 0.38–0.45 s (correct English) |
 
 See [docs/PERFORMANCE.md](docs/PERFORMANCE.md). NVIDIA users can build `cargo build --release --features cuda` (see [PACKAGING.md](PACKAGING.md)).
+
+## Screenshots
+
+| Settings | Speed, sending & AI | History |
+|---|---|---|
+| ![](docs/images/win-settings.png) | ![](docs/images/win-settings-speed.png) | ![](docs/images/win-history.png) |
+
+## Troubleshooting
+
+- **Model download fails with "Access denied"**: update to v0.5.1-test or later (downloads go to `%LOCALAPPDATA%\SpeakType\models`). Don't set the model folder under `C:\Program Files`. Antivirus may also lock the `.bin.part` file.
+- **Hotkey works but no text appears**: if the target app runs as administrator, run SpeakType as administrator too.
+- **No audio**: pick the right microphone in Settings → Input device, and allow desktop apps to use the microphone in Windows privacy settings.
+
+Idle measurements (CI, 30 s): Windows CPU 47.8% of one core → 0%, working set 151 → 154 MB; Linux CPU 0% → 0%, RSS 174 → 40–48 MB. Windows exe grew 19.1 → 36.7 MB (bundled Skia).
 
 ## UI (v0.5)
 
