@@ -482,6 +482,8 @@ impl SpeakTypeApp {
             egui::ViewportBuilder::default()
                 .with_title("SpeakType indicator")
                 .with_inner_size(size)
+                .with_min_inner_size(size)
+                .with_max_inner_size(size)
                 .with_position(pos)
                 .with_decorations(false)
                 .with_resizable(false)
