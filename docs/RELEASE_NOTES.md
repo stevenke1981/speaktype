@@ -1,27 +1,25 @@
-SpeakType 0.5.0 (test build from the `test` branch)
+SpeakType 0.5.2-test（測試版）
 
-**New UI toolkit:** moved from egui/eframe 0.27 to Slint 1.18. Every feature is still there: main window, settings (including speed settings and per-app send rules), history with search and copy, tray, hotkeys, models, recordings and errors.
+## 更新內容
+- **修正一直停在「轉寫中」**：背景轉錄程序發生錯誤時不再無聲結束，會顯示錯誤並回到待命；另加入逾時保護（90 秒＋錄音長度 × 20，最長 15 分鐘），逾時會提示改用較小模型或 GPU 版。
+- **CPU 版辨識速度約快 5 倍**：Windows 版 whisper.cpp 改用 clang-cl 編譯（原為 MSVC），並固定 AVX2/FMA/F16C 指令集。CI 量測 ggml-base、11 秒音訊：5.5–6.9 秒 → 1.0–1.25 秒（與 Linux 相同）。CPU 上不再啟用 flash attention。
+- **新增 NVIDIA CUDA 版**（`speaktype-cuda-*`）：使用 GPU 辨識；電腦沒有 NVIDIA 驅動程式時仍可啟動並自動改用 CPU。
+- 介面與記錄檔顯示實際使用的後端（CPU／CUDA）；GPU 偵測優先選擇 NVIDIA 顯示卡，不再誤認虛擬顯示卡。
 
-**Idle CPU:** event-driven, with no idle redraw. Windows CI idle went from 47.8% of one core to 0%; working set is about 154 MB.
+## 要下載哪個檔案
+| 檔案 | 適用 |
+|---|---|
+| `speaktype-cuda-setup-windows-x64.exe` / `speaktype-cuda-windows-x64.zip` | 有 NVIDIA 顯示卡（GTX 10 系列以上），需 NVIDIA 驅動程式 R525 以上；檔案較大（含 CUDA 執行階段） |
+| `speaktype-setup-windows-x64.exe` / `speaktype-windows-x64.zip` | 一般電腦（CPU） |
+| `SHA256SUMS.txt`、`SHA256SUMS-cuda.txt` | 校驗碼 |
 
-**Rendering:** Skia on Windows, falling back to Skia software and then to the software renderer. The Mesa/llvmpipe CI workaround has been removed. The window shows its first frame in about 280 ms in CI.
+兩種安裝程式安裝到同一個位置，可直接互相覆蓋安裝。
 
-**Recording indicator:** now a separate frameless, transparent, always-on-top window that does not take focus. This fixes the dark rectangle that appeared behind the pill.
+## 安裝與驗證
+1. 執行安裝程式（未簽章，SmartScreen 按「其他資訊 → 仍要執行」）。
+2. 「設定 → 辨識硬體」：自動（預設，有 NVIDIA GPU 就用）／GPU (CUDA)／CPU。實際使用的後端顯示在模型狀態與記錄檔。
+3. `Get-FileHash .\檔名 -Algorithm SHA256`，與 SHA256SUMS 比對。
 
-**Size:** speaktype.exe is now 36.7 MB, up from 19.1 MB, because the Skia renderer is bundled.
-
-**Not verified on real hardware:** real mic/hotkey/tray, focus behaviour of the indicator on a physical desktop, multi-monitor, Skia on real GPUs.
-
----
-
-SpeakType 0.4.0 (test build from the `test` branch)
-
-**Downloads:** `speaktype-setup-windows-x64.exe` (installer, zh-TW / en, per-user or all users, optional autostart) or `speaktype-windows-x64.zip` (portable). CPU build; the speech model (~547 MB) is downloaded on first start.
-
-**Faster:** 2–3× faster transcription on CPU (reused whisper state, clip-sized encoder window, all cores, warm-up), mic kept warm with 300 ms pre-roll, hotkey reacts immediately even when minimised to the tray, no blocking GPU query at startup, quantized default model.
-
-**Text sending:** per-app paste / Ctrl+Shift+V / SendInput Unicode, clipboard (text + image) restored in the background, waits for modifier release, re-focuses the original window, Shift+Enter newlines for chat apps.
-
-**Typeless-style cleanup:** filler removal, self-correction, numbered lists, CJK/Latin spacing, Traditional Chinese by default, language auto-detect for zh/en mix, optional AI rewrite (Ollama / OpenAI-compatible), per-app tone, history panel with latency, floating recording indicator, toggle mode.
-
-**Not verified on real hardware yet:** microphone capture and global hotkey on a physical Windows PC, insertion into LINE / Office / terminals with an IME active, the floating indicator on multi-monitor setups.
+## 尚未驗證
+- 尚未在實體 NVIDIA 顯示卡上實測 CUDA 版辨識速度。
+- AVX2 版在使用者電腦上的實際速度尚待確認。

@@ -42,6 +42,52 @@ pub struct Transcriber {
     // Field order matters: the state must be dropped before the context.
     state: Mutex<WhisperState>,
     _ctx: WhisperContext,
+    backend: Backend,
+}
+
+/// Inference backend actually used for a loaded model.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Backend {
+    Cpu,
+    Cuda,
+}
+
+impl Backend {
+    pub fn label(self) -> &'static str {
+        match self {
+            Backend::Cpu => "CPU",
+            Backend::Cuda => "CUDA",
+        }
+    }
+}
+
+/// True when this binary was built with CUDA support.
+pub const fn built_with_cuda() -> bool {
+    cfg!(feature = "cuda")
+}
+
+/// NVIDIA driver present (nvcuda.dll / libcuda)? Without it a CUDA build must
+/// run on the CPU.
+pub fn nvidia_driver_present() -> bool {
+    #[cfg(windows)]
+    {
+        let sys = std::env::var_os("SystemRoot").map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from(r"C:\Windows"));
+        sys.join("System32").join("nvcuda.dll").exists()
+    }
+    #[cfg(not(windows))]
+    {
+        std::path::Path::new("/proc/driver/nvidia/version").exists()
+    }
+}
+
+/// Decide the backend from the user preference, the build and the driver.
+pub fn choose_backend(prefer_gpu: bool, built_cuda: bool, driver: bool) -> Backend {
+    if prefer_gpu && built_cuda && driver {
+        Backend::Cuda
+    } else {
+        Backend::Cpu
+    }
 }
 
 const SAMPLE_RATE: usize = 16_000;
@@ -49,8 +95,33 @@ const SAMPLE_RATE: usize = 16_000;
 const FRAMES_PER_SEC: usize = 50;
 
 impl Transcriber {
-    pub fn new(model_path: &Path, use_gpu: bool) -> Result<Self, String> {
+    pub fn new(model_path: &Path, prefer_gpu: bool) -> Result<Self, String> {
+        let backend = choose_backend(prefer_gpu, built_with_cuda(), nvidia_driver_present());
+        let use_gpu = backend == Backend::Cuda;
+        if prefer_gpu && !use_gpu {
+            crate::modules::error::log_error(
+                "whisper backend",
+                if !built_with_cuda() {
+                    "此版本為 CPU 版，無法使用 GPU；請安裝 speaktype-cuda 版本".to_string()
+                } else {
+                    "找不到 NVIDIA 驅動程式 (nvcuda.dll)，改用 CPU".to_string()
+                },
+            );
+        }
+        // flash attention only helps on the GPU; on the CPU it was being
+        // enabled whenever the "CUDA" switch was on, even in CPU-only builds.
         let params = WhisperContextParameters { use_gpu, flash_attn: use_gpu, ..Default::default() };
+        crate::modules::error::log_error(
+            "whisper backend",
+            format!(
+                "backend={} (prefer_gpu={prefer_gpu}, cuda_build={}, nvidia_driver={}) threads={} system_info={}",
+                backend.label(),
+                built_with_cuda(),
+                nvidia_driver_present(),
+                resolve_threads(0),
+                whisper_rs::print_system_info().trim()
+            ),
+        );
         let ctx = WhisperContext::new_with_params(
             model_path
                 .to_str()
@@ -64,7 +135,12 @@ impl Transcriber {
         Ok(Self {
             state: Mutex::new(state),
             _ctx: ctx,
+            backend,
         })
+    }
+
+    pub fn backend(&self) -> Backend {
+        self.backend
     }
 
     /// Run a short silent pass so the first real dictation is not slower.
@@ -173,6 +249,16 @@ pub fn resolve_threads(requested: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use super::{choose_backend, Backend};
+
+    #[test]
+    fn backend_falls_back_to_cpu() {
+        assert_eq!(choose_backend(true, true, true), Backend::Cuda);
+        assert_eq!(choose_backend(true, false, true), Backend::Cpu);
+        assert_eq!(choose_backend(true, true, false), Backend::Cpu);
+        assert_eq!(choose_backend(false, true, true), Backend::Cpu);
+    }
+
     use super::*;
 
     #[test]

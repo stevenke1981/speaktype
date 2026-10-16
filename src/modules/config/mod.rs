@@ -28,6 +28,10 @@ pub struct AppConfig {
     #[serde(default = "default_use_cuda")]
     pub use_cuda: bool,
 
+    /// 辨識硬體："auto"（預設）、"gpu"、"cpu"。缺少時依 use_cuda 推得。
+    #[serde(default)]
+    pub gpu_mode: Option<GpuMode>,
+
     /// 錄音相關設定
     #[serde(default)]
     pub recording: RecordingConfig,
@@ -72,6 +76,7 @@ impl Default for AppConfig {
             model_name: Some(models::DEFAULT_MODEL.to_string()),
             models_dir: default_models_dir(),
             use_cuda: true,
+            gpu_mode: None,
             recording: RecordingConfig::default(),
             hotkeys: HotkeyConfig::default(),
             output: OutputConfig::default(),
@@ -561,6 +566,43 @@ pub fn dir_is_writable(dir: &std::path::Path) -> bool {
     }
 }
 
+/// Which hardware runs whisper.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum GpuMode {
+    Auto,
+    Gpu,
+    Cpu,
+}
+
+impl GpuMode {
+    pub fn index(self) -> i32 {
+        match self {
+            GpuMode::Auto => 0,
+            GpuMode::Gpu => 1,
+            GpuMode::Cpu => 2,
+        }
+    }
+    pub fn from_index(i: i32) -> Self {
+        match i {
+            1 => GpuMode::Gpu,
+            2 => GpuMode::Cpu,
+            _ => GpuMode::Auto,
+        }
+    }
+}
+
+impl AppConfig {
+    pub fn gpu_mode(&self) -> GpuMode {
+        self.gpu_mode.unwrap_or(if self.use_cuda { GpuMode::Auto } else { GpuMode::Cpu })
+    }
+    /// `use_cuda` stays in sync: it means "try the GPU" (auto or gpu).
+    pub fn set_gpu_mode(&mut self, mode: GpuMode) {
+        self.gpu_mode = Some(mode);
+        self.use_cuda = mode != GpuMode::Cpu;
+    }
+}
+
 fn backup_invalid_config(path: &PathBuf) {
     let backup_path = path.with_extension("toml.invalid");
     match File::open(path).and_then(|mut input| {
@@ -655,6 +697,23 @@ fn default_code_rules() -> ScenarioOutputRules {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn gpu_mode_defaults_from_use_cuda_and_roundtrips() {
+        let mut c = super::AppConfig::default();
+        assert_eq!(c.gpu_mode(), super::GpuMode::Auto);
+        c.use_cuda = false;
+        assert_eq!(c.gpu_mode(), super::GpuMode::Cpu);
+        c.set_gpu_mode(super::GpuMode::Gpu);
+        assert!(c.use_cuda);
+        let text = toml::to_string(&c).unwrap();
+        assert!(text.contains("gpu_mode = \"gpu\""));
+        let back: super::AppConfig = toml::from_str(&text).unwrap();
+        assert_eq!(back.gpu_mode(), super::GpuMode::Gpu);
+        for m in [super::GpuMode::Auto, super::GpuMode::Gpu, super::GpuMode::Cpu] {
+            assert_eq!(super::GpuMode::from_index(m.index()), m);
+        }
+    }
+
     #[test]
     fn unwritable_models_dir_falls_back_to_user_dir() {
         let tmp = std::env::temp_dir().join(format!("st-models-{}", std::process::id()));

@@ -144,7 +144,13 @@ impl ModelWorker {
             let mut loaded_model: Option<(PathBuf, bool)> = None;
 
             while let Ok(command) = command_rx.recv() {
-                match command {
+                if matches!(command, WorkerCommand::Shutdown) {
+                    break;
+                }
+                let is_transcribe = matches!(command, WorkerCommand::Transcribe(_));
+                // A panic inside whisper/cleanup used to kill this thread
+                // silently, leaving the UI on "轉寫中" forever.
+                let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match command {
                     WorkerCommand::LoadModel {
                         model_path,
                         use_cuda,
@@ -193,7 +199,7 @@ impl ModelWorker {
                                     let _ = event_tx.send(WorkerEvent::Transcription(
                                         TranscriptionEvent::Failed(error),
                                     ));
-                                    continue;
+                                    return;
                                 }
                             }
                         }
@@ -211,7 +217,24 @@ impl ModelWorker {
                             }
                         }
                     }
-                    WorkerCommand::Shutdown => break,
+                    WorkerCommand::Shutdown => {}
+                }));
+                if let Err(panic) = outcome {
+                    let msg = panic
+                        .downcast_ref::<&str>()
+                        .map(|s| s.to_string())
+                        .or_else(|| panic.downcast_ref::<String>().cloned())
+                        .unwrap_or_else(|| "unknown panic".to_string());
+                    let error = format!("轉錄程序發生內部錯誤，已重設：{msg}");
+                    log_error("worker panic", &error);
+                    transcriber = None;
+                    loaded_model = None;
+                    let event = if is_transcribe {
+                        WorkerEvent::Transcription(TranscriptionEvent::Failed(error))
+                    } else {
+                        WorkerEvent::Model(ModelEvent::Failed(error))
+                    };
+                    let _ = event_tx.send(event);
                 }
             }
         });
@@ -439,7 +462,9 @@ impl SpeakTypeEngine {
 
     pub fn model_status_text(&self) -> String {
         if self.model_ready {
-            let acceleration = if self.use_cuda { "CUDA" } else { "CPU" };
+            use crate::modules::transcription::transcriber as t;
+            let acceleration =
+                t::choose_backend(self.use_cuda, t::built_with_cuda(), t::nvidia_driver_present()).label();
             format!(
                 "{}：已準備 ({acceleration})",
                 self.model_path

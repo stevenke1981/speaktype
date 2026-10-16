@@ -1,5 +1,6 @@
 # Builds dist\speaktype-setup-windows-x64.exe with Inno Setup.
 # Expects target\release\speaktype.exe to exist (cargo build --release).
+param([string]$OutputName = 'speaktype-setup-windows-x64')
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
@@ -27,6 +28,6 @@ $version = $m.Matches[0].Groups[1].Value
 Write-Host "Building installer for SpeakType $version"
 
 New-Item -ItemType Directory -Force dist | Out-Null
-& $iscc /Qp "/DAppVersion=$version" "/DSrcDir=$root\target\release" 'installer\speaktype.iss'
+& $iscc /Qp "/DAppVersion=$version" "/DOutputName=$OutputName" "/DSrcDir=$root\target\release" 'installer\speaktype.iss'
 if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
-Get-Item 'dist\speaktype-setup-windows-x64.exe' | Format-List Name, Length
+Get-Item "dist\$OutputName.exe" | Format-List Name, Length

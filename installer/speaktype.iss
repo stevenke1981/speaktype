@@ -8,6 +8,9 @@
 #ifndef SrcDir
   #define SrcDir "..\target\release"
 #endif
+#ifndef OutputName
+  #define OutputName "speaktype-setup-windows-x64"
+#endif
 #define AppName "SpeakType"
 #define AppExe "speaktype.exe"
 
@@ -25,7 +28,7 @@ DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 OutputDir=..\dist
-OutputBaseFilename=speaktype-setup-windows-x64
+OutputBaseFilename={#OutputName}
 SetupIconFile=..\assets\speaktype.ico
 UninstallDisplayIcon={app}\{#AppExe}
 UninstallDisplayName={#AppName} {#AppVersion}
