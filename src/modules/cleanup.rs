@@ -158,7 +158,22 @@ fn apply_correction(previous: &str, correction: &str) -> String {
     if suffix > 0 && suffix < c.len() {
         let c_core = &c[..c.len() - suffix];
         let p_core = &p[..p.len() - suffix];
-        let keep = p_core.len().saturating_sub(c_core.len());
+        // "下午3點開會，不對，14點開會": replace the whole number, not N chars.
+        let keep = if c_core.first().is_some_and(|ch| ch.is_ascii_digit()) {
+            p_core
+                .iter()
+                .rposition(|ch| ch.is_ascii_digit())
+                .map(|end| {
+                    let mut start = end;
+                    while start > 0 && p_core[start - 1].is_ascii_digit() {
+                        start -= 1;
+                    }
+                    start
+                })
+                .unwrap_or_else(|| p_core.len().saturating_sub(c_core.len()))
+        } else {
+            p_core.len().saturating_sub(c_core.len())
+        };
         return p_core[..keep].iter().chain(c.iter()).collect();
     }
     let prefix = common_prefix_chars(&p, &c);
@@ -399,6 +414,7 @@ mod tests {
             "我們明天下午四點開會。"
         );
         assert_eq!(resolve_self_corrections("下午三點，不對，四點"), "下午四點");
+        assert_eq!(resolve_self_corrections("下午3點開會，不對，14點開會"), "下午14點開會");
         assert_eq!(
             resolve_self_corrections("send it to John, I mean Mary"),
             "send it to Mary"

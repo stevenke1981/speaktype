@@ -79,6 +79,11 @@ impl TrayManager {
 }
 
 pub fn create_tray() -> Option<TrayManager> {
+    // The tray is Windows-only; on Linux tray-icon needs a GTK main loop that
+    // eframe does not run, so skip it there (Linux builds are for CI/dev only).
+    if cfg!(not(windows)) {
+        return None;
+    }
     match TrayManager::new() {
         Ok(tray) => Some(tray),
         Err(err) => {
