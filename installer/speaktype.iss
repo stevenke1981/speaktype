@@ -88,7 +88,7 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 #ifdef Cuda
 ; Fetch NVIDIA CUDA 12.6 runtime DLLs (~430 MB, SHA256-verified) into {app}.
 ; Visible window shows progress; failure keeps the app usable on the CPU.
-Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\cuda-libs.ps1"" -Dest ""{app}"""; StatusMsg: "{cm:CudaDownload}"; Flags: waituntilterminated; Check: not WizardSilent or CudaInSilent; AfterInstall: CudaResult
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\cuda-libs.ps1"" -Dest ""{app}"""; StatusMsg: "{cm:CudaDownload}"; Flags: waituntilterminated; Check: CudaShouldRun; AfterInstall: CudaResult
 #endif
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
 
@@ -96,10 +96,10 @@ Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags
 Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM {#AppExe}"; Flags: runhidden; RunOnceId: "KillSpeakType"
 
 [Code]
-function CudaInSilent(): Boolean;
+function CudaShouldRun(): Boolean;
 begin
   { Silent installs (CI smoke test) skip the 430 MB download unless /CUDALIBS is given. }
-  Result := Pos('/CUDALIBS', Uppercase(GetCmdTail())) > 0;
+  Result := (not WizardSilent()) or (Pos('/CUDALIBS', Uppercase(GetCmdTail())) > 0);
 end;
 
 procedure CudaResult();
