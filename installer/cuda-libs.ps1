@@ -14,7 +14,7 @@ $ProgressPreference = 'Continue'
 $need = 'cudart64_12.dll', 'cublas64_12.dll', 'cublasLt64_12.dll'
 $base = 'https://developer.download.nvidia.com/compute/cuda/redist'
 $mirror = 'https://github.com/stevenke1981/speaktype/releases/download/cuda-libs-12.6/speaktype-cuda-libs-12.6-windows-x64.zip'
-$mirrorSha = '@MIRROR_SHA256@'
+$mirrorSha = '318143c64e27b351bdf93ec149f3136a6b08d8a713d83a7b224ad66750101d41'
 $tmp = Join-Path $env:TEMP ("speaktype-cuda-" + [guid]::NewGuid())
 New-Item -ItemType Directory -Force $tmp, $Dest | Out-Null
 
