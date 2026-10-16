@@ -20,7 +20,7 @@
 | 版本 | 適合 | 安裝程式大小 |
 |---|---|---|
 | CPU（`speaktype-setup-windows-x64.exe`） | 所有電腦，最小 | 約 13 MB |
-| Vulkan（`speaktype-vulkan-setup-windows-x64.exe`） | 有 NVIDIA／AMD／Intel 顯示卡 | 見 Release 頁 |
+| Vulkan（`speaktype-vulkan-setup-windows-x64.exe`） | 有 NVIDIA／AMD／Intel 顯示卡 | 約 17.7 MB |
 | CUDA（`speaktype-cuda-setup-windows-x64.exe`） | NVIDIA GTX 10 系列以上、驅動 R525+；安裝時另從 NVIDIA 官方下載約 430 MB | 見 Release 頁 |
 
 GPU 版在找不到驅動程式或元件時會自動改用 CPU；「設定 → 辨識硬體」可選 自動／GPU／CPU，並顯示目前使用的後端。

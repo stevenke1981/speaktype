@@ -10,9 +10,9 @@ SpeakType 0.5.4
 ## 要下載哪個版本
 | 你的電腦 | 下載 | 大小 |
 |---|---|---|
-| 不確定／沒有獨立顯示卡 | `speaktype-setup-windows-x64.exe`（CPU 版） | @CPU@ |
-| 有 AMD／Intel／NVIDIA 顯示卡 | `speaktype-vulkan-setup-windows-x64.exe`（Vulkan 版） | @VK@ |
-| 有 NVIDIA 顯示卡、想要最快 | `speaktype-cuda-setup-windows-x64.exe`（CUDA 版，安裝時另下載約 430 MB） | @CUDA@ |
+| 不確定／沒有獨立顯示卡 | `speaktype-setup-windows-x64.exe`（CPU 版） | 約 13 MB |
+| 有 AMD／Intel／NVIDIA 顯示卡 | `speaktype-vulkan-setup-windows-x64.exe`（Vulkan 版） | 約 17.7 MB |
+| 有 NVIDIA 顯示卡、想要最快 | `speaktype-cuda-setup-windows-x64.exe`（CUDA 版，安裝時另下載約 430 MB） | 見檔案列表 |
 
 每個版本都有免安裝 zip（`speaktype-*-windows-x64.zip`）。三種安裝程式裝在同一位置，可直接互相覆蓋。
 
