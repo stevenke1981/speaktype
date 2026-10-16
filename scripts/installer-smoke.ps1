@@ -24,7 +24,7 @@ Check ($ver -like '*SpeakType*') "speaktype --version: $($ver.Trim())"
 # Installed app starts and renders its first frame.
 $probe = Join-Path $env:RUNNER_TEMP 'installed-startup.txt'
 $env:SPEAKTYPE_SKIP_MODEL_LOAD = '1'
-# Headless runners have no GPU/OpenGL: borrow Mesa DLLs (MESA_DIR) for this probe only.
+# MESA_DIR (optional) lends software-GL DLLs to the probe; the Slint build does not need it.
 $mesa = @()
 if ($env:MESA_DIR) { $mesa = Get-ChildItem (Join-Path $env:MESA_DIR '*.dll') | ForEach-Object { Copy-Item $_ $dir -PassThru } }
 if ($env:MESA_DIR -or $env:SMOKE_GUI -eq '1') {

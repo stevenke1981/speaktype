@@ -35,12 +35,15 @@ jobs:
           ./target/release/speaktype-bench bench/ggml-base.bin bench/jfk.wav 3 | tee bench/latency-linux.txt
       - name: GUI screenshots (Xvfb)
         run: ./scripts/linux-screenshots.sh target/release/speaktype linux-shots
+      - name: Idle CPU (Xvfb)
+        run: ./scripts/linux-idle-cpu.sh target/release/speaktype 30 | tee linux-shots/idle-cpu-linux.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: linux-evidence
           path: |
             linux-shots/*.png
+            linux-shots/*.txt
             bench/latency-linux.txt
 
   windows:
@@ -58,24 +61,12 @@ jobs:
         run: cargo test --release --locked -- --test-threads=1
       - name: Version
         run: target\release\speaktype.exe --version
-      - name: Software OpenGL for headless runner (Mesa llvmpipe, CI only)
-        shell: pwsh
-        run: |
-          $u = "https://github.com/pal1000/mesa-dist-win/releases/download/24.2.8/mesa3d-24.2.8-release-msvc.7z"
-          Invoke-WebRequest $u -OutFile mesa.7z
-          7z x mesa.7z -omesa -y | Out-Null
-          Copy-Item mesa\x64\*.dll target\release\
-          "MESA_DIR=$PWD\mesa\x64" >> $env:GITHUB_ENV
-          Get-ChildItem target\release\*.dll | Select-Object Name
       - name: GUI screenshots + startup time
         shell: pwsh
         run: ./scripts/win-screenshot.ps1
       - name: Idle CPU (GUI open, tray active)
         shell: pwsh
         run: ./scripts/win-idle-cpu.ps1
-      - name: Remove Mesa DLLs before packaging
-        shell: pwsh
-        run: Remove-Item target\release\opengl32.dll,target\release\libgallium_wgl.dll,target\release\libglapi.dll,target\release\dxil.dll,target\release\openclon12.dll -ErrorAction SilentlyContinue
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -88,6 +79,8 @@ jobs:
         run: ./scripts/build-installer.ps1
       - name: Installer smoke test (silent install / uninstall)
         shell: pwsh
+        env:
+          SMOKE_GUI: '1'
         run: ./scripts/installer-smoke.ps1
       - name: Portable zip
         shell: pwsh

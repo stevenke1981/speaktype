@@ -30,6 +30,8 @@ jobs:
         run: ./scripts/build-installer.ps1
       - name: Installer smoke test
         shell: pwsh
+        env:
+          SMOKE_GUI: '1'
         run: ./scripts/installer-smoke.ps1
       - name: Portable zip
         shell: pwsh
