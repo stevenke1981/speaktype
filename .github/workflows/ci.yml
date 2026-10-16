@@ -65,6 +65,7 @@ jobs:
           Invoke-WebRequest $u -OutFile mesa.7z
           7z x mesa.7z -omesa -y | Out-Null
           Copy-Item mesa\x64\*.dll target\release\
+          "MESA_DIR=$PWD\mesa\x64" >> $env:GITHUB_ENV
           Get-ChildItem target\release\*.dll | Select-Object Name
       - name: GUI screenshots + startup time
         shell: pwsh

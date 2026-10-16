@@ -24,9 +24,15 @@ Check ($ver -like '*SpeakType*') "speaktype --version: $($ver.Trim())"
 # Installed app starts and renders its first frame.
 $probe = Join-Path $env:RUNNER_TEMP 'installed-startup.txt'
 $env:SPEAKTYPE_SKIP_MODEL_LOAD = '1'
-$p = Start-Process (Join-Path $dir 'speaktype.exe') -PassThru -ArgumentList '--startup-probe', "`"$probe`""
-if (-not $p.WaitForExit(60000)) { Stop-Process -Id $p.Id -Force; throw "FAILED: installed app did not reach first frame in 60 s" }
-Check (Test-Path $probe) "installed app first frame in $((Get-Content $probe).Trim()) ms"
+# Headless runners have no GPU/OpenGL: borrow Mesa DLLs (MESA_DIR) for this probe only.
+$mesa = @()
+if ($env:MESA_DIR) { $mesa = Get-ChildItem (Join-Path $env:MESA_DIR '*.dll') | ForEach-Object { Copy-Item $_ $dir -PassThru } }
+if ($env:MESA_DIR -or $env:SMOKE_GUI -eq '1') {
+  $p = Start-Process (Join-Path $dir 'speaktype.exe') -PassThru -ArgumentList '--startup-probe', "`"$probe`""
+  if (-not $p.WaitForExit(60000)) { Stop-Process -Id $p.Id -Force; throw "FAILED: installed app did not reach first frame in 60 s" }
+  Check (Test-Path $probe) "installed app first frame in $(if (Test-Path $probe) { (Get-Content $probe).Trim() }) ms"
+} else { Write-Host "skip: installed-app GUI probe (no MESA_DIR / GPU on this runner)" }
+$mesa | Remove-Item -ErrorAction SilentlyContinue
 Remove-Item env:SPEAKTYPE_SKIP_MODEL_LOAD
 
 # Simulate user data so we can check it survives a silent uninstall without /PURGE.
