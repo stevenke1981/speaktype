@@ -24,8 +24,23 @@ jobs:
       GGML_AVX2: "ON"
       GGML_FMA: "ON"
       GGML_F16C: "ON"
+      GGML_AVX512: "OFF"
+      GGML_AVX512_VBMI: "OFF"
+      GGML_AVX512_VNNI: "OFF"
+      GGML_AVX512_BF16: "OFF"
+      GGML_AVX_VNNI: "OFF"
+      GGML_AMX_TILE: "OFF"
+      GGML_AMX_INT8: "OFF"
+      GGML_AMX_BF16: "OFF"
+      # MSVC-compiled ggml is far slower than clang; build whisper.cpp with clang-cl.
+      CMAKE_GENERATOR: Ninja
+      CMAKE_C_COMPILER: clang-cl
+      CMAKE_CXX_COMPILER: clang-cl
     steps:
       - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Build
@@ -87,6 +102,14 @@ jobs:
       GGML_AVX2: "ON"
       GGML_FMA: "ON"
       GGML_F16C: "ON"
+      GGML_AVX512: "OFF"
+      GGML_AVX512_VBMI: "OFF"
+      GGML_AVX512_VNNI: "OFF"
+      GGML_AVX512_BF16: "OFF"
+      GGML_AVX_VNNI: "OFF"
+      GGML_AMX_TILE: "OFF"
+      GGML_AMX_INT8: "OFF"
+      GGML_AMX_BF16: "OFF"
       CMAKE_CUDA_ARCHITECTURES: "61;75;86;89"
     steps:
       - uses: actions/checkout@v4
@@ -98,7 +121,7 @@ jobs:
         id: cuda
         with:
           cuda: '12.6.3'
-          method: network
+          method: local
           sub-packages: '["nvcc","cudart","cublas","cublas_dev","visual_studio_integration","crt","nvrtc"]'
       - name: Build (CUDA)
         run: cargo build --release --locked --features cuda --bins
