@@ -36,6 +36,7 @@ jobs:
       CMAKE_GENERATOR: Ninja
       CMAKE_C_COMPILER: clang-cl
       CMAKE_CXX_COMPILER: clang-cl
+      CXXFLAGS: /EHsc
     steps:
       - uses: actions/checkout@v4
       - uses: ilammy/msvc-dev-cmd@v1
