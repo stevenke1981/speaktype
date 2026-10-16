@@ -26,6 +26,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub struct SpeakTypeApp {
+    scroll_to_speed_settings: u8,
     history_filter: String,
     last_latency: Option<speaktype::modules::engine::PipelineTimings>,
     startup_started: Instant,
@@ -107,6 +108,7 @@ impl SpeakTypeApp {
         }
 
         let mut app = Self {
+            scroll_to_speed_settings: 0,
             history_filter: String::new(),
             last_latency: None,
             startup_started,
@@ -161,6 +163,20 @@ impl SpeakTypeApp {
             app.hotkey.set_waker(move || ctx.request_repaint());
         }
         app.engine.set_keep_mic_warm(app.config.recording.keep_mic_warm);
+        // CI / screenshot hooks
+        match std::env::var("SPEAKTYPE_UI_PAGE").as_deref() {
+            Ok("settings") => app.show_settings_window = true,
+            Ok("history") => app.show_history_window = true,
+            Ok("speed") => {
+                app.show_settings_window = true;
+                app.scroll_to_speed_settings = 5;
+            }
+            _ => {}
+        }
+        if std::env::var_os("SPEAKTYPE_DEMO_INDICATOR").is_some() {
+            app.recording = true;
+            app.recording_start = Some(Instant::now());
+        }
         let record_toggle = app.config.hotkeys.record_toggle.clone();
         if let Err(err) = app.hotkey.update_hotkey(&record_toggle) {
             app.record_error(format!("快捷鍵設定無效，已使用預設值: {}", err));
@@ -170,7 +186,9 @@ impl SpeakTypeApp {
             app.config.recording.gain,
         );
         app.audio_devices = app.engine.input_devices();
-        app.start_model_job();
+        if std::env::var_os("SPEAKTYPE_SKIP_MODEL_LOAD").is_none() {
+            app.start_model_job();
+        }
         if start_hidden_to_tray && app.tray.is_none() {
             app.hidden_to_tray = false;
             app.start_minimized_pending = false;
@@ -1637,6 +1655,11 @@ impl SpeakTypeApp {
         use speaktype::modules::config::{AppRule, InjectionMethod};
         let mut changed = false;
         ui.add_space(theme::SPACE_MD);
+        if self.scroll_to_speed_settings > 0 {
+            self.scroll_to_speed_settings -= 1;
+            ui.scroll_to_cursor(Some(egui::Align::TOP));
+            ui.ctx().request_repaint();
+        }
         ui.label(egui::RichText::new("速度、送出與 AI").size(14.0).color(theme::text_primary()));
         ui.add_space(theme::SPACE_SM);
 
@@ -1699,7 +1722,7 @@ impl SpeakTypeApp {
                 ui.label("換行=Shift+Enter");
                 ui.end_row();
                 for (i, rule) in self.config.injection.app_rules.iter_mut().enumerate() {
-                    changed |= ui.add(egui::TextEdit::singleline(&mut rule.process).desired_width(120.0)).changed();
+                    changed |= ui.add_sized([130.0, 20.0], egui::TextEdit::singleline(&mut rule.process)).changed();
                     let mut method = rule.method.unwrap_or(InjectionMethod::Paste);
                     let mut use_default = rule.method.is_none();
                     ui.horizontal(|ui| {
@@ -1716,10 +1739,10 @@ impl SpeakTypeApp {
                             changed |= ui.selectable_value(&mut rule.scenario, Some(sc.name().to_string()), sc.name()).changed();
                         }
                     });
-                    changed |= ui.add(egui::TextEdit::singleline(&mut rule.tone).desired_width(110.0)).changed();
+                    changed |= ui.add_sized([110.0, 20.0], egui::TextEdit::singleline(&mut rule.tone)).changed();
                     ui.horizontal(|ui| {
                         changed |= ui.checkbox(&mut rule.newline_as_shift_enter, "").changed();
-                        if ui.small_button("✕").clicked() {
+                        if ui.small_button("刪除").clicked() {
                             remove = Some(i);
                         }
                     });

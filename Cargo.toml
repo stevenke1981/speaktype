@@ -2,7 +2,7 @@
 
 [package]
 name = "speaktype"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2021"
 
 [lints.rust]
@@ -13,13 +13,27 @@ all = { level = "warn", priority = -1 }
 unwrap_used = "allow"
 bool_to_int_with_if = "allow"
 
+[features]
+default = []
+# NVIDIA GPU inference (needs the CUDA toolkit at build time and its DLLs at run time).
+cuda = ["whisper-rs/cuda"]
+# Any GPU via Vulkan (NVIDIA / AMD / Intel); needs the Vulkan SDK at build time.
+vulkan = ["whisper-rs/vulkan"]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "unwind"
+
 [dependencies]
 eframe = "0.27"
 egui = "0.27"
 cpal = "0.15"
 enigo = "0.1"
 arboard = "3.6"
-whisper-rs = { version = "0.16" }
+whisper-rs = { version = "0.16" }  # CPU by default; `--features cuda` / `vulkan` for GPU
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

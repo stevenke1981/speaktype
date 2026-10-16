@@ -66,7 +66,7 @@ impl Default for AppConfig {
         Self {
             last_scenario: None,
             model_name: Some(models::DEFAULT_MODEL.to_string()),
-            models_dir: Some(default_models_dir().unwrap_or_else(|| "models".to_string())),
+            models_dir: default_models_dir(),
             use_cuda: true,
             recording: RecordingConfig::default(),
             hotkeys: HotkeyConfig::default(),
@@ -419,6 +419,9 @@ impl AppConfig {
     }
 
     fn migrate_defaults(&mut self) {
+        if self.models_dir.as_deref().is_some_and(|d| d.trim() == "models" || d.trim().is_empty()) {
+            self.models_dir = None;
+        }
         if self.hotkeys.record_toggle.trim().eq_ignore_ascii_case("F2") {
             self.hotkeys.record_toggle = "Ctrl+Shift+L".to_string();
         }
@@ -465,17 +468,36 @@ impl AppConfig {
     }
 
     /// 取得模型目錄
+    /// Models directory. Relative paths used to resolve against the *current
+    /// directory*, which is `C:\Windows\System32` when started from the Run key
+    /// (autostart) — the model then "disappeared" and was downloaded again.
+    /// Now: absolute config value > `<exe dir>\models` (portable installs that
+    /// already contain models) > `%LOCALAPPDATA%\SpeakType\models`.
     pub fn get_models_dir(&self) -> String {
-        self.models_dir
-            .clone()
-            .unwrap_or_else(|| "models".to_string())
+        if let Some(dir) = self.models_dir.as_ref().filter(|d| !d.trim().is_empty()) {
+            let path = PathBuf::from(dir);
+            if path.is_absolute() {
+                return dir.clone();
+            }
+            if let Some(exe_dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(PathBuf::from)) {
+                return exe_dir.join(path).to_string_lossy().into_owned();
+            }
+        }
+        if let Some(exe_models) = std::env::current_exe()
+            .ok()
+            .and_then(|e| e.parent().map(|p| p.join("models")))
+            .filter(|dir| has_model_files(dir))
+        {
+            return exe_models.to_string_lossy().into_owned();
+        }
+        paths::models_dir().to_string_lossy().into_owned()
     }
 
     /// 取得模型名稱
     pub fn get_model_name(&self) -> String {
         self.model_name
             .clone()
-            .unwrap_or_else(|| "large-v3-turbo".to_string())
+            .unwrap_or_else(|| models::DEFAULT_MODEL.to_string())
     }
 
     /// 取得預期模型檔路徑。whisper.cpp 模型檔通常以 ggml- 開頭。
@@ -527,6 +549,16 @@ fn default_model_name() -> Option<String> {
 
 fn default_models_dir() -> Option<String> {
     None
+}
+
+fn has_model_files(dir: &std::path::Path) -> bool {
+    fs::read_dir(dir)
+        .map(|entries| {
+            entries.flatten().any(|e| {
+                e.path().extension().is_some_and(|ext| ext == "bin")
+            })
+        })
+        .unwrap_or(false)
 }
 
 fn default_true_rec() -> bool {

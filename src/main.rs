@@ -28,7 +28,7 @@ fn main() {
 
     let start_hidden_to_tray = args.iter().any(|arg| arg == "--tray");
     let viewport = egui::ViewportBuilder::default()
-        .with_inner_size([560.0, 560.0])
+        .with_inner_size([680.0, 720.0])
         .with_title("SpeakType");
     let viewport = match load_app_icon() {
         Ok(icon) => viewport.with_icon(icon),
