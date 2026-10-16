@@ -9,6 +9,7 @@
 *.log
 .DS_Store
 Thumbs.db
+__pycache__/
 .opencode/
 .codebase-memory/
 ${PROJECT_ROOT}/
