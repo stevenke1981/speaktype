@@ -69,6 +69,14 @@ Hotkey release → text sent, 8-core CPU without GPU, 11–13 s clips:
 
 See [docs/PERFORMANCE.md](docs/PERFORMANCE.md). NVIDIA users can build `cargo build --release --features cuda` (see [PACKAGING.md](PACKAGING.md)).
 
+## UI (v0.5)
+
+Since v0.5 the UI is built with [Slint](https://slint.dev) instead of egui. On Windows it renders with Skia and falls back to Skia software, then to Slint's software renderer. CJK font chain: Microsoft JhengHei UI → Microsoft YaHei UI → PMingLiU → SimSun.
+
+- Event-driven, so there is no redraw while idle. Idle CPU over 30 s in CI: Windows went from 47.8% of one core (egui) to 0%; Linux stays at 0%.
+- The recording indicator is now its own small window: frameless, transparent, always on top, does not take focus, not shown in the taskbar. The dark box that used to appear behind the pill is gone.
+- Closing or minimising the window sends it to the tray; hotkeys keep working in the background.
+
 ## Build from source
 
 Rust stable, CMake, LLVM/Clang and the Visual Studio C++ tools.

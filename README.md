@@ -71,6 +71,14 @@ Windows 上的本機語音輸入工具：按住快捷鍵說話，放開後文字
 
 有 NVIDIA 顯示卡可以自行用 `cargo build --release --features cuda` 編譯 CUDA 版（見 [PACKAGING.md](PACKAGING.md)）。
 
+## 介面（v0.5）
+
+v0.5 起介面改用 [Slint](https://slint.dev)（原為 egui）。Windows 預設使用 Skia 繪製，無法使用時依序退回 Skia 軟體繪製、Slint 軟體繪製；中文字型依序使用 Microsoft JhengHei UI → Microsoft YaHei UI → PMingLiU → SimSun。
+
+- 改為事件驅動：閒置時不重繪。CI 量測 30 秒閒置 CPU：Windows 從 47.8%（單核，egui）降到 0%，Linux 維持 0%。
+- 錄音指示器改成獨立的小視窗：無邊框、透明、置頂、不搶焦點、不顯示在工作列。指示器後方不會再出現深色方塊。
+- 關閉或最小化視窗會縮到系統匣，快捷鍵在背景照常運作。
+
 ## 從原始碼編譯
 
 需要 Rust stable、CMake、LLVM/Clang、Visual Studio C++ 工具。
