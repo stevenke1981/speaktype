@@ -1,7 +1,14 @@
 # SpeakType Packaging
 
-Release builds are CPU-only and produced by GitHub Actions (`.github/workflows/release.yml`):
-`cargo build --release`, then `scripts/build-installer.ps1` (Inno Setup) and `scripts/package-portable.ps1`.
+Release builds have separate CPU and CUDA jobs in GitHub Actions (`.github/workflows/release.yml`):
+`cargo build --release --locked --bins` (plus `--features cuda` for CUDA), then
+`scripts/build-installer.ps1` (Inno Setup) and `scripts/package-portable.ps1`.
+
+Published assets are preserved: rerunning an existing tag skips uploads with the same
+asset names instead of replacing them. Use a new version tag for changed binaries;
+do not move an existing tag or delete its assets. A successful rerun does not prove
+the public assets match that rerun, so verify downloaded assets against their
+published `SHA256SUMS.txt` / `SHA256SUMS-cuda.txt` before announcing a release.
 
 For a local NVIDIA build use `cargo build --release --features cuda` (or `--features vulkan` for any GPU with the Vulkan SDK installed) and copy the CUDA runtime DLLs next to `speaktype.exe`; the installer picks up any `*.dll` in `target\release`.
 
