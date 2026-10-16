@@ -15,7 +15,7 @@ SpeakType 0.5.3
 | `speaktype-setup-windows-x64.exe` / `speaktype-windows-x64.zip` | 一般電腦（CPU） |
 | `SHA256SUMS.txt`、`SHA256SUMS-cuda.txt` | 校驗碼 |
 
-兩種安裝程式安裝到同一個位置，可直接互相覆蓋安裝。
+兩種安裝程式安裝至同一路徑，互換安裝尚未實機驗證。
 
 ## 安裝與驗證
 1. 執行安裝程式（未簽章，SmartScreen 按「其他資訊 → 仍要執行」）。
