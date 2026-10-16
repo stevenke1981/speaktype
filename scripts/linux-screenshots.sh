@@ -2,7 +2,7 @@
 # usage: linux-screenshots.sh <binary> <outdir>   (needs Xvfb + ImageMagick `import`)
 set -u
 BIN=$1; OUT=$2; mkdir -p "$OUT"
-D=$((140 + RANDOM % 50)); Xvfb :$D -screen 0 1100x800x24 >/dev/null 2>&1 & XP=$!; sleep 1
+D=$((140 + RANDOM % 50)); Xvfb :$D -screen 0 1600x900x24 >/dev/null 2>&1 & XP=$!; sleep 1
 export DISPLAY=:$D
 shot() { # name, env...
   local name=$1; shift
@@ -16,5 +16,6 @@ shot() { # name, env...
 shot linux-main SPEAKTYPE_X=1
 shot linux-settings SPEAKTYPE_UI_PAGE=settings
 shot linux-settings-speed SPEAKTYPE_UI_PAGE=speed
+shot linux-history SPEAKTYPE_UI_PAGE=history SPEAKTYPE_DEMO_HISTORY=1
 shot linux-indicator SPEAKTYPE_DEMO_INDICATOR=1
 kill $XP

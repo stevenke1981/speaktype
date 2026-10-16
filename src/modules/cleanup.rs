@@ -42,7 +42,7 @@ fn strip_prefix_ci<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
     {
         let rest = &text[prefix.len()..];
         // Latin fillers must be whole words.
-        let latin = prefix.chars().all(|c| c.is_ascii());
+        let latin = prefix.is_ascii();
         if latin && rest.chars().next().is_some_and(is_latin_word) {
             return None;
         }

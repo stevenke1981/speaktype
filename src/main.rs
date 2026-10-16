@@ -1,11 +1,45 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
-mod app;
+slint::include_modules!();
 
-use app::SpeakTypeApp;
-use eframe::NativeOptions;
+mod app;
+mod indicator;
+
 use speaktype::modules::error::{install_panic_hook, log_error};
-use speaktype::modules::icon::load_app_icon;
+
+fn console_print(msg: &str) {
+    #[cfg(windows)]
+    // SAFETY: AttachConsole has no memory-safety preconditions; it lets the
+    // GUI-subsystem exe print to the console it was started from.
+    unsafe {
+        windows_sys::Win32::System::Console::AttachConsole(u32::MAX);
+    }
+    println!("{msg}");
+}
+
+/// Windows: Skia (GPU, D3D) first, then Skia's CPU rasteriser, then Slint's
+/// software renderer (VMs / RDP / CI runners without a GPU). Elsewhere the
+/// software renderer. `SLINT_BACKEND` overrides the choice. Every selection
+/// installs the winit hook that makes the indicator a non-activating window.
+fn select_renderer() {
+    let selector = || slint::BackendSelector::new().with_winit_window_attributes_hook(indicator::indicator_attributes);
+    if std::env::var_os("SLINT_BACKEND").is_some() {
+        if let Err(err) = selector().select() {
+            log_error("renderer", err.to_string());
+        }
+        return;
+    }
+    let renderers: &[&str] = if cfg!(windows) { &["skia", "skia-software", "software"] } else { &["software"] };
+    for name in renderers {
+        match selector().backend_name("winit".into()).renderer_name(name.to_string()).select() {
+            Ok(()) => {
+                log_error("renderer", format!("using winit/{name}"));
+                return;
+            }
+            Err(err) => log_error("renderer", format!("{name}: {err}")),
+        }
+    }
+}
 
 fn main() {
     let startup_started = std::time::Instant::now();
@@ -18,7 +52,7 @@ fn main() {
         .and_then(|i| args.get(i + 1))
         .map(std::path::PathBuf::from);
     if args.iter().any(|a| a == "--version" || a == "-V") {
-        println!("SpeakType {}", env!("CARGO_PKG_VERSION"));
+        console_print(&format!("SpeakType {}", env!("CARGO_PKG_VERSION")));
         return;
     }
 
@@ -26,44 +60,16 @@ fn main() {
         return;
     };
 
-    let start_hidden_to_tray = args.iter().any(|arg| arg == "--tray");
-    let viewport = egui::ViewportBuilder::default()
-        .with_inner_size([680.0, 720.0])
-        .with_title("SpeakType");
-    let viewport = match load_app_icon() {
-        Ok(icon) => viewport.with_icon(icon),
-        Err(err) => {
-            log_error("app icon", err);
-            viewport
-        }
+    select_renderer();
+    let opts = app::Options {
+        start_hidden_to_tray: args.iter().any(|arg| arg == "--tray"),
+        startup_started,
+        startup_probe,
     };
-    // Windows: wgpu (DirectX 12, with the WARP software fallback on machines
-    // without a usable GPU / OpenGL driver such as VMs, RDP and CI). If that
-    // fails we retry with the OpenGL (glow) renderer.
-    let renderers: &[eframe::Renderer] = if cfg!(windows) {
-        &[eframe::Renderer::Wgpu, eframe::Renderer::Glow]
-    } else {
-        &[eframe::Renderer::Glow, eframe::Renderer::Wgpu]
-    };
-    for renderer in renderers {
-        let options = NativeOptions {
-            viewport: viewport.clone(),
-            renderer: *renderer,
-            ..Default::default()
-        };
-        let probe = startup_probe.clone();
-        match eframe::run_native(
-            "SpeakType",
-            options,
-            Box::new(move |cc| {
-                Box::new(SpeakTypeApp::new(&cc.egui_ctx, start_hidden_to_tray, startup_started, probe))
-            }),
-        ) {
-            Ok(()) => return,
-            Err(err) => log_error("app startup", format!("{renderer:?}: {err}")),
-        }
+    if let Err(err) = app::run(opts) {
+        log_error("app startup", err.to_string());
+        std::process::exit(1);
     }
-    std::process::exit(1);
 }
 
 struct SingleInstanceGuard {

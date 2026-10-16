@@ -59,6 +59,10 @@ pub struct AppConfig {
     /// 浮動錄音指示器
     #[serde(default)]
     pub indicator: IndicatorConfig,
+
+    /// 介面主題 id（見 ui_style::THEMES）
+    #[serde(default)]
+    pub ui_theme: Option<String>,
 }
 
 impl Default for AppConfig {
@@ -76,6 +80,7 @@ impl Default for AppConfig {
             injection: InjectionConfig::default(),
             ai_cleanup: AiCleanupConfig::default(),
             indicator: IndicatorConfig::default(),
+            ui_theme: None,
         }
     }
 }

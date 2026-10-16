@@ -120,19 +120,24 @@ enum WorkerCommand {
         cancel: Arc<AtomicBool>,
         warm_up: bool,
     },
-    Transcribe(TranscriptionRequest),
+    Transcribe(Box<TranscriptionRequest>),
     Shutdown,
 }
+
+type WorkerWaker = Arc<std::sync::Mutex<Option<Box<dyn Fn() + Send>>>>;
 
 pub struct ModelWorker {
     commands: Sender<WorkerCommand>,
     events: Receiver<WorkerEvent>,
+    waker: WorkerWaker,
 }
 
 impl ModelWorker {
     pub fn start() -> Self {
         let (command_tx, command_rx) = mpsc::channel();
-        let (event_tx, event_rx) = mpsc::channel();
+        let (raw_tx, event_rx) = mpsc::channel();
+        let waker: WorkerWaker = Arc::new(std::sync::Mutex::new(None));
+        let event_tx = WakingSender { tx: raw_tx, waker: waker.clone() };
 
         std::thread::spawn(move || {
             let mut transcriber: Option<Transcriber> = None;
@@ -195,7 +200,7 @@ impl ModelWorker {
 
                         match transcriber.as_ref() {
                             Some(transcriber) => {
-                                run_transcription_with_transcriber(transcriber, request, |event| {
+                                run_transcription_with_transcriber(transcriber, *request, |event| {
                                     let _ = event_tx.send(WorkerEvent::Transcription(event));
                                 })
                             }
@@ -214,6 +219,15 @@ impl ModelWorker {
         Self {
             commands: command_tx,
             events: event_rx,
+            waker,
+        }
+    }
+
+    /// Called (from the worker thread) after every event, so the UI can wake up
+    /// instead of polling on a timer.
+    pub fn set_waker(&self, wake: impl Fn() + Send + 'static) {
+        if let Ok(mut slot) = self.waker.lock() {
+            *slot = Some(Box::new(wake));
         }
     }
 
@@ -236,12 +250,31 @@ impl ModelWorker {
 
     pub fn transcribe(&self, request: TranscriptionRequest) -> Result<(), String> {
         self.commands
-            .send(WorkerCommand::Transcribe(request))
+            .send(WorkerCommand::Transcribe(Box::new(request)))
             .map_err(|err| err.to_string())
     }
 
     pub fn try_recv(&self) -> Option<WorkerEvent> {
         self.events.try_recv().ok()
+    }
+}
+
+/// Event sender that pokes the UI waker after each send.
+#[derive(Clone)]
+struct WakingSender {
+    tx: Sender<WorkerEvent>,
+    waker: WorkerWaker,
+}
+
+impl WakingSender {
+    fn send(&self, event: WorkerEvent) -> Result<(), ()> {
+        let result = self.tx.send(event).map_err(|_| ());
+        if let Ok(waker) = self.waker.lock() {
+            if let Some(wake) = waker.as_ref() {
+                wake();
+            }
+        }
+        result
     }
 }
 
@@ -460,7 +493,7 @@ fn load_worker_model(
     model_path: &Path,
     use_cuda: bool,
     cancel: Arc<AtomicBool>,
-    event_tx: &Sender<WorkerEvent>,
+    event_tx: &WakingSender,
 ) -> Result<Transcriber, String> {
     ensure_model_file(model_path, cancel, |progress| {
         let _ = event_tx.send(WorkerEvent::Model(ModelEvent::Progress(progress)));

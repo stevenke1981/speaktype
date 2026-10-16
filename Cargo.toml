@@ -2,7 +2,7 @@
 
 [package]
 name = "speaktype"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 
 [lints.rust]
@@ -28,8 +28,8 @@ strip = true
 panic = "unwind"
 
 [dependencies]
-eframe = { version = "0.27", features = ["wgpu"] }
-egui = "0.27"
+slint = { version = "1.18.1", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-software", "software-renderer-systemfonts", "unstable-winit-030"] }
+png = "0.17"
 cpal = "0.15"
 enigo = "0.1"
 arboard = "3.6"
@@ -44,13 +44,16 @@ rdev = "0.5"
 chrono = { version = "0.4", features = ["serde"] }
 hound = "3.5"
 ferrous-opencc = "0.4"
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_DataExchange", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_DataExchange", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_System_Console"] }
 
 [target.'cfg(windows)'.dependencies]
+# Windows: Skia (falls back to the software renderer at runtime, see main.rs).
+slint = { version = "1.18.1", default-features = false, features = ["renderer-skia"] }
 tray-icon = { version = "0.24", default-features = false }
 
 [target.'cfg(not(windows))'.dependencies]
 tray-icon = { version = "0.24" }
 
 [build-dependencies]
+slint-build = "1.18.1"
 winresource = "0.1"

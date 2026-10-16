@@ -5,7 +5,7 @@ pub mod config;
 pub mod diagnostics;
 pub mod engine;
 pub mod error;
-pub mod gui;
+pub mod ui_style;
 pub mod history;
 pub mod icon;
 pub mod inject;

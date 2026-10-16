@@ -286,7 +286,7 @@ mod padded_tests {
     #[test]
     fn padded_trim_keeps_context_and_clears_silence() {
         let mut samples = vec![0.0_f32; 16_000];
-        samples.extend(std::iter::repeat(0.3).take(8_000));
+        samples.extend(std::iter::repeat_n(0.3, 8_000));
         samples.extend(vec![0.0_f32; 16_000]);
         let mut vad = EnergyVad::default();
         vad.trim_silence_padded(&mut samples, 3_200);

@@ -50,9 +50,7 @@ const FRAMES_PER_SEC: usize = 50;
 
 impl Transcriber {
     pub fn new(model_path: &Path, use_gpu: bool) -> Result<Self, String> {
-        let mut params = WhisperContextParameters::default();
-        params.use_gpu = use_gpu;
-        params.flash_attn = use_gpu;
+        let params = WhisperContextParameters { use_gpu, flash_attn: use_gpu, ..Default::default() };
         let ctx = WhisperContext::new_with_params(
             model_path
                 .to_str()
