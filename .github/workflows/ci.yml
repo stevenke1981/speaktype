@@ -70,6 +70,9 @@ jobs:
       - name: GUI screenshots + startup time
         shell: pwsh
         run: ./scripts/win-screenshot.ps1
+      - name: Idle CPU (GUI open, tray active)
+        shell: pwsh
+        run: ./scripts/win-idle-cpu.ps1
       - name: Remove Mesa DLLs before packaging
         shell: pwsh
         run: Remove-Item target\release\opengl32.dll,target\release\libgallium_wgl.dll,target\release\libglapi.dll,target\release\dxil.dll,target\release\openclon12.dll -ErrorAction SilentlyContinue
