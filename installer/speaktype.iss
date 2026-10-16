@@ -57,6 +57,11 @@ english.TaskAutostart=Start SpeakType when I sign in to Windows (runs in the tra
 english.GroupStartup=Startup:
 english.PurgeData=Also delete SpeakType settings, history, recordings and downloaded models?%n%n(Location: %1)
 
+chinesetraditional.CudaDownload=正在下載 NVIDIA CUDA 元件（約 430 MB）…
+english.CudaDownload=Downloading NVIDIA CUDA runtime (~430 MB)...
+chinesetraditional.CudaFailed=CUDA 元件下載失敗。SpeakType 會先使用 CPU 辨識，之後可在「設定 → 辨識硬體」按「下載 CUDA 元件」重試。
+english.CudaFailed=Downloading the CUDA runtime failed. SpeakType will use the CPU; retry later from Settings.
+
 [Tasks]
 Name: "autostart"; Description: "{cm:TaskAutostart}"; GroupDescription: "{cm:GroupStartup}"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
@@ -64,6 +69,9 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Files]
 Source: "{#SrcDir}\speaktype.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SrcDir}\*.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+#ifdef Cuda
+Source: "cuda-libs.ps1"; DestDir: "{app}"; Flags: ignoreversion
+#endif
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\README.en.md"; DestDir: "{app}"; Flags: ignoreversion
 
@@ -77,12 +85,33 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopico
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "SpeakType"; ValueData: """{app}\{#AppExe}"" --tray"; Flags: uninsdeletevalue; Tasks: autostart
 
 [Run]
+#ifdef Cuda
+; Fetch NVIDIA CUDA 12.6 runtime DLLs (~430 MB, SHA256-verified) into {app}.
+; Visible window shows progress; failure keeps the app usable on the CPU.
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\cuda-libs.ps1"" -Dest ""{app}"""; StatusMsg: "{cm:CudaDownload}"; Flags: waituntilterminated; Check: not WizardSilent or CudaInSilent; AfterInstall: CudaResult
+#endif
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
 Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM {#AppExe}"; Flags: runhidden; RunOnceId: "KillSpeakType"
 
 [Code]
+function CudaInSilent(): Boolean;
+begin
+  { Silent installs (CI smoke test) skip the 430 MB download unless /CUDALIBS is given. }
+  Result := Pos('/CUDALIBS', Uppercase(GetCmdTail())) > 0;
+end;
+
+procedure CudaResult();
+var
+  App: String;
+begin
+  App := ExpandConstant('{app}');
+  if not (FileExists(App + '\cudart64_12.dll') and FileExists(App + '\cublas64_12.dll') and FileExists(App + '\cublasLt64_12.dll')) then
+    if not WizardSilent() then
+      MsgBox(CustomMessage('CudaFailed'), mbInformation, MB_OK);
+end;
+
 function DataDir(): String;
 begin
   Result := ExpandConstant('{localappdata}\SpeakType');
