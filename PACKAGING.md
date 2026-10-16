@@ -1,5 +1,10 @@
 # SpeakType Packaging
 
+Release builds are CPU-only and produced by GitHub Actions (`.github/workflows/release.yml`):
+`cargo build --release`, then `scripts/build-installer.ps1` (Inno Setup) and `scripts/package-portable.ps1`.
+
+For a local NVIDIA build use `cargo build --release --features cuda` (or `--features vulkan` for any GPU with the Vulkan SDK installed) and copy the CUDA runtime DLLs next to `speaktype.exe`; the installer picks up any `*.dll` in `target\release`.
+
 ## Build Notes
 
 ### Prerequisites

@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    name: Build Windows x64
+    runs-on: windows-latest
+    env:
+      LIBCLANG_PATH: C:\Program Files\LLVM\bin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release --locked --bins
+      - name: Test
+        run: cargo test --release --locked
+      - name: Installer
+        shell: pwsh
+        run: ./scripts/build-installer.ps1
+      - name: Installer smoke test
+        shell: pwsh
+        run: ./scripts/installer-smoke.ps1
+      - name: Portable zip
+        shell: pwsh
+        run: ./scripts/package-portable.ps1 -SkipBuild
+      - name: Checksums
+        shell: pwsh
+        run: |
+          Get-FileHash dist\speaktype-setup-windows-x64.exe, dist\speaktype-windows-x64.zip -Algorithm SHA256 |
+            ForEach-Object { "{0}  {1}" -f $_.Hash.ToLower(), (Split-Path $_.Path -Leaf) } |
+            Set-Content -Encoding ascii dist\SHA256SUMS.txt
+          Get-Content dist\SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: speaktype-windows-x64
+          path: |
+            dist/speaktype-setup-windows-x64.exe
+            dist/speaktype-windows-x64.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          make_latest: ${{ !contains(github.ref_name, '-') }}
+          body_path: docs/RELEASE_NOTES.md
+          files: |
+            dist/speaktype-setup-windows-x64.exe
+            dist/speaktype-windows-x64.zip
+            dist/SHA256SUMS.txt
