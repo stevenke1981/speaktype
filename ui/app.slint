@@ -272,7 +272,7 @@ export component MainWindow inherits Window {
                 Button { text: "設定"; clicked => { root.action("open-settings"); } }
                 Button { text: "錯誤"; clicked => { root.action("open-errors"); } }
                 Rectangle { horizontal-stretch: 1; }
-                Button { text: "↻"; clicked => { root.action("refresh-devices"); } }
+                Button { text: "重新偵測"; clicked => { root.action("refresh-devices"); } }
                 Button { text: "隱藏"; enabled: root.tray-available; clicked => { root.action("hide-to-tray"); } }
             }
         }
@@ -501,7 +501,7 @@ export component MainWindow inherits Window {
                         ComboBox { model: root.rule-methods; current-index <=> r.method; selected => { root.rules-changed(); } min-width: 130px; horizontal-stretch: 2; }
                         ComboBox { model: root.rule-scenarios; current-index <=> r.scenario; selected => { root.rules-changed(); } min-width: 90px; horizontal-stretch: 1; }
                         LineEdit { placeholder-text: "語氣"; text <=> r.tone; edited => { root.rules-changed(); } min-width: 60px; horizontal-stretch: 1; }
-                        CheckBox { text: "⇧↵"; checked <=> r.shift-enter; toggled => { root.rules-changed(); } }
+                        CheckBox { text: "Shift+Enter"; checked <=> r.shift-enter; toggled => { root.rules-changed(); } }
                         Button { text: "刪除"; clicked => { root.rule-delete(i); } }
                     }
                     HorizontalLayout {
