@@ -11,7 +11,7 @@ function Shot([string]$name, [hashtable]$envs) {
   foreach ($k in $envs.Keys) { Set-Item "env:$k" $envs[$k] }
   $p = Start-Process $Exe -PassThru
   Start-Sleep -Seconds 8
-  if ($p.HasExited) { throw "GUI exited early with code $($p.ExitCode)" }
+  if ($p.HasExited) { Get-Content "$env:LOCALAPPDATA\SpeakType\logs\speaktype.log" -ErrorAction SilentlyContinue | Select-Object -Last 20; throw "GUI exited early with code $($p.ExitCode)" }
   $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
   $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
   $g = [System.Drawing.Graphics]::FromImage($bmp)

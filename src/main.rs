@@ -37,23 +37,33 @@ fn main() {
             viewport
         }
     };
-    let options = NativeOptions {
-        viewport,
-        ..Default::default()
+    // Windows: wgpu (DirectX 12, with the WARP software fallback on machines
+    // without a usable GPU / OpenGL driver such as VMs, RDP and CI). If that
+    // fails we retry with the OpenGL (glow) renderer.
+    let renderers: &[eframe::Renderer] = if cfg!(windows) {
+        &[eframe::Renderer::Wgpu, eframe::Renderer::Glow]
+    } else {
+        &[eframe::Renderer::Glow, eframe::Renderer::Wgpu]
     };
-
-    if let Err(err) = eframe::run_native(
-        "SpeakType",
-        options,
-        Box::new(move |cc| Box::new(SpeakTypeApp::new(
-            &cc.egui_ctx,
-            start_hidden_to_tray,
-            startup_started,
-            startup_probe,
-        ))),
-    ) {
-        log_error("app startup", err);
+    for renderer in renderers {
+        let options = NativeOptions {
+            viewport: viewport.clone(),
+            renderer: *renderer,
+            ..Default::default()
+        };
+        let probe = startup_probe.clone();
+        match eframe::run_native(
+            "SpeakType",
+            options,
+            Box::new(move |cc| {
+                Box::new(SpeakTypeApp::new(&cc.egui_ctx, start_hidden_to_tray, startup_started, probe))
+            }),
+        ) {
+            Ok(()) => return,
+            Err(err) => log_error("app startup", format!("{renderer:?}: {err}")),
+        }
     }
+    std::process::exit(1);
 }
 
 struct SingleInstanceGuard {
