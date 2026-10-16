@@ -479,23 +479,42 @@ impl AppConfig {
     /// Now: absolute config value > `<exe dir>\models` (portable installs that
     /// already contain models) > `%LOCALAPPDATA%\SpeakType\models`.
     pub fn get_models_dir(&self) -> String {
-        if let Some(dir) = self.models_dir.as_ref().filter(|d| !d.trim().is_empty()) {
-            let path = PathBuf::from(dir);
-            if path.is_absolute() {
-                return dir.clone();
+        // Directory used for *new downloads*: must be writable. An exe-relative
+        // or configured dir under C:\Program Files is read-only for normal users
+        // (os error 5, 存取被拒), so fall back to %LOCALAPPDATA%\SpeakType\models.
+        if let Some(dir) = self.configured_models_dir() {
+            if dir_is_writable(&dir) {
+                return dir.to_string_lossy().into_owned();
             }
-            if let Some(exe_dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(PathBuf::from)) {
-                return exe_dir.join(path).to_string_lossy().into_owned();
-            }
-        }
-        if let Some(exe_models) = std::env::current_exe()
-            .ok()
-            .and_then(|e| e.parent().map(|p| p.join("models")))
-            .filter(|dir| has_model_files(dir))
-        {
-            return exe_models.to_string_lossy().into_owned();
+            log_error("models dir", format!("{} 無法寫入，改用 {}", dir.display(), paths::models_dir().display()));
         }
         paths::models_dir().to_string_lossy().into_owned()
+    }
+
+    fn configured_models_dir(&self) -> Option<PathBuf> {
+        let dir = self.models_dir.as_ref().filter(|d| !d.trim().is_empty())?;
+        let path = PathBuf::from(dir);
+        if path.is_absolute() {
+            return Some(path);
+        }
+        std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.join(path)))
+    }
+
+    /// Every directory that may already hold models (old locations included),
+    /// in priority order. Existing models are used read-only from any of them.
+    pub fn model_search_dirs(&self) -> Vec<PathBuf> {
+        let mut dirs = Vec::new();
+        if let Some(d) = self.configured_models_dir() {
+            dirs.push(d);
+        }
+        dirs.push(PathBuf::from(self.get_models_dir()));
+        if let Some(d) = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.join("models"))) {
+            dirs.push(d);
+        }
+        dirs.push(paths::models_dir());
+        let mut seen = Vec::new();
+        dirs.retain(|d| if seen.contains(d) { false } else { seen.push(d.clone()); true });
+        dirs
     }
 
     /// 取得模型名稱
@@ -505,27 +524,40 @@ impl AppConfig {
             .unwrap_or_else(|| models::DEFAULT_MODEL.to_string())
     }
 
-    /// 取得預期模型檔路徑。whisper.cpp 模型檔通常以 ggml- 開頭。
+    /// Existing model file for the given name in any known dir.
+    pub fn find_model_file(&self, model_name: &str) -> Option<PathBuf> {
+        let names = [
+            models::catalog_entry(model_name).file_name.to_string(),
+            format!("ggml-{}.bin", model_name),
+            format!("{}.bin", model_name),
+        ];
+        self.model_search_dirs()
+            .into_iter()
+            .flat_map(|d| names.iter().map(move |n| d.join(n)).collect::<Vec<_>>())
+            .find(|p| p.is_file())
+    }
+
+    /// 取得模型檔路徑：已存在的舊位置優先，否則為可寫入的下載位置。
     pub fn get_model_path(&self) -> PathBuf {
         let model_name = self.get_model_name();
-        let catalog_path =
-            PathBuf::from(self.get_models_dir()).join(models::catalog_entry(&model_name).file_name);
-        if catalog_path.exists() {
-            return catalog_path;
-        }
+        self.find_model_file(&model_name).unwrap_or_else(|| {
+            PathBuf::from(self.get_models_dir()).join(models::catalog_entry(&model_name).file_name)
+        })
+    }
+}
 
-        let models_dir = PathBuf::from(self.get_models_dir());
-        let ggml_path = models_dir.join(format!("ggml-{}.bin", model_name));
-        if ggml_path.exists() {
-            return ggml_path;
+/// True when we can create the dir and a file inside it.
+pub fn dir_is_writable(dir: &std::path::Path) -> bool {
+    if fs::create_dir_all(dir).is_err() {
+        return false;
+    }
+    let probe = dir.join(format!(".speaktype-write-test-{}", std::process::id()));
+    match File::create(&probe) {
+        Ok(_) => {
+            let _ = fs::remove_file(&probe);
+            true
         }
-
-        let legacy_path = models_dir.join(format!("{}.bin", model_name));
-        if legacy_path.exists() {
-            return legacy_path;
-        }
-
-        catalog_path
+        Err(_) => false,
     }
 }
 
@@ -556,15 +588,6 @@ fn default_models_dir() -> Option<String> {
     None
 }
 
-fn has_model_files(dir: &std::path::Path) -> bool {
-    fs::read_dir(dir)
-        .map(|entries| {
-            entries.flatten().any(|e| {
-                e.path().extension().is_some_and(|ext| ext == "bin")
-            })
-        })
-        .unwrap_or(false)
-}
 
 fn default_true_rec() -> bool {
     true
@@ -632,6 +655,29 @@ fn default_code_rules() -> ScenarioOutputRules {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn unwritable_models_dir_falls_back_to_user_dir() {
+        let tmp = std::env::temp_dir().join(format!("st-models-{}", std::process::id()));
+        let blocker = tmp.join("file");
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(&blocker, b"x").unwrap();
+        let home = tmp.join("home");
+        std::env::set_var("SPEAKTYPE_HOME", &home);
+        // A path below a regular file can never be created -> not writable.
+        let c = super::AppConfig {
+            models_dir: Some(blocker.join("models").to_string_lossy().into_owned()),
+            ..Default::default()
+        };
+        assert!(!super::dir_is_writable(&blocker.join("models")));
+        assert_eq!(std::path::PathBuf::from(c.get_models_dir()), home.join("models"));
+        // An existing model in the user dir is found.
+        std::fs::create_dir_all(home.join("models")).unwrap();
+        let f = home.join("models").join("ggml-base.bin");
+        std::fs::write(&f, b"m").unwrap();
+        assert_eq!(c.find_model_file("base"), Some(f));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
     use super::*;
 
     #[test]

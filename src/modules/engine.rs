@@ -794,6 +794,15 @@ fn normalize_transcription_text(text: &str) -> String {
         .to_string()
 }
 
+fn describe_io_error(what: &str, path: &Path, err: &std::io::Error) -> String {
+    let hint = if err.kind() == std::io::ErrorKind::PermissionDenied {
+        "（沒有寫入權限：請勿把模型資料夾設在 C:\\Program Files，或檔案正被防毒/其他程式使用）"
+    } else {
+        ""
+    };
+    format!("{what} {}: {err}{hint}", path.display())
+}
+
 fn ensure_model_file(
     model_path: &Path,
     cancel: Arc<AtomicBool>,
@@ -807,7 +816,7 @@ fn ensure_model_file(
     let parent = model_path
         .parent()
         .ok_or_else(|| format!("模型路徑無效: {}", model_path.display()))?;
-    fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    fs::create_dir_all(parent).map_err(|err| describe_io_error("無法建立模型資料夾", parent, &err))?;
 
     let file_name = model_path
         .file_name()
@@ -833,7 +842,10 @@ fn ensure_model_file(
         .send()
         .map_err(|err| format!("無法連線到模型來源: {}", err))?
         .error_for_status()
-        .map_err(|err| format!("模型來源回應失敗: {}", err))?;
+        .map_err(|err| match err.status().map(|s| s.as_u16()) {
+            Some(401) | Some(403) => format!("模型來源拒絕存取 (HTTP {})：{}，請檢查網路/代理或稍後再試", err.status().unwrap(), url),
+            _ => format!("模型來源回應失敗: {}", err),
+        })?;
 
     let resumed = response.status().as_u16() == 206 && resume_bytes > 0;
     if resume_bytes > 0 && !resumed {
@@ -857,7 +869,7 @@ fn ensure_model_file(
         .write(true)
         .truncate(!resumed)
         .open(&temp_path)
-        .map_err(|err| format!("無法建立暫存模型檔 {}: {}", temp_path.display(), err))?;
+        .map_err(|err| describe_io_error("無法建立暫存模型檔", &temp_path, &err))?;
     let mut buffer = vec![0_u8; DOWNLOAD_CHUNK_SIZE];
     let started = Instant::now();
     let mut downloaded_bytes = starting_bytes;
@@ -890,7 +902,7 @@ fn ensure_model_file(
 
     fs::rename(&temp_path, model_path).map_err(|err| {
         let _ = fs::remove_file(&temp_path);
-        format!("無法寫入模型檔 {}: {}", model_path.display(), err)
+        describe_io_error("無法寫入模型檔", model_path, &err)
     })?;
 
     if let Some(expected) = remote_sha256 {
