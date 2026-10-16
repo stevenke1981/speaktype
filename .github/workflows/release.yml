@@ -136,9 +136,10 @@ jobs:
       - name: Starts without NVIDIA driver (delay-load check)
         shell: pwsh
         run: |
-          $v = & .\target\release\speaktype.exe --version
-          if ($LASTEXITCODE -ne 0) { throw "speaktype.exe failed to start: $LASTEXITCODE" }
-          Write-Host $v
+          # GUI-subsystem exe: wait for it explicitly. 0xC0000135 = missing DLL.
+          $p = Start-Process -FilePath .\target\release\speaktype.exe -ArgumentList '--version' -Wait -PassThru -NoNewWindow
+          Write-Host "exit code: $($p.ExitCode)"
+          if ($p.ExitCode -ne 0) { throw ("speaktype.exe failed to start: 0x{0:X}" -f $p.ExitCode) }
       - name: Installer (CUDA)
         shell: pwsh
         run: ./scripts/build-installer.ps1 -OutputName speaktype-cuda-setup-windows-x64
