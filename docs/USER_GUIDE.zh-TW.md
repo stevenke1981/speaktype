@@ -1,4 +1,4 @@
-# SpeakType 使用說明（v0.5.1-test）
+# SpeakType 使用說明（v0.5.3）
 
 [English](USER_GUIDE.en.md) ｜ [回到 README](../README.md)
 
@@ -14,6 +14,16 @@
 4. 免安裝版：解壓縮 `speaktype-windows-x64.zip` 後執行 `speaktype.exe`。
 
 程式沒有程式碼簽章，SmartScreen 若跳出警告，按「其他資訊 → 仍要執行」。
+
+## 要選哪個版本（CPU / Vulkan / CUDA）
+
+| 版本 | 適合 | 安裝程式大小 |
+|---|---|---|
+| CPU（`speaktype-setup-windows-x64.exe`） | 所有電腦，最小 | 約 13 MB |
+| Vulkan（`speaktype-vulkan-setup-windows-x64.exe`） | 有 NVIDIA／AMD／Intel 顯示卡 | 見 Release 頁 |
+| CUDA（`speaktype-cuda-setup-windows-x64.exe`） | NVIDIA GTX 10 系列以上、驅動 R525+；安裝時另從 NVIDIA 官方下載約 430 MB | 見 Release 頁 |
+
+GPU 版在找不到驅動程式或元件時會自動改用 CPU；「設定 → 辨識硬體」可選 自動／GPU／CPU，並顯示目前使用的後端。
 
 ## 2. 下載模型
 
@@ -87,7 +97,7 @@
 
 | 問題 | 處理方式 |
 |---|---|
-| 下載模型「存取被拒」 | 更新到 v0.5.1-test 以上；不要把模型資料夾設在 `C:\Program Files`；防毒軟體可能鎖住 `.bin.part`，可暫時將 `%LOCALAPPDATA%\SpeakType\models` 加入排除 |
+| 下載模型「存取被拒」 | 更新到 v0.5.3 以上；不要把模型資料夾設在 `C:\Program Files`；防毒軟體可能鎖住 `.bin.part`，可暫時將 `%LOCALAPPDATA%\SpeakType\models` 加入排除 |
 | 下載失敗／很慢 | 確認可連到 `huggingface.co`；公司網路或代理可能擋下，錯誤訊息會顯示 HTTP 狀態 |
 | 沒有聲音、辨識結果空白 | 選對麥克風並看即時音量；Windows「設定 → 隱私權與安全性 → 麥克風」允許桌面應用程式 |
 | 快捷鍵沒反應 | 確認「啟用全域快捷鍵」；快捷鍵可能與其他程式衝突，改用其他組合 |

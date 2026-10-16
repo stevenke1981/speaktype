@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.3 — 2026-10-17
+### 新增
+- Vulkan 版（`speaktype-vulkan-*`），支援 NVIDIA／AMD／Intel GPU；沒有 Vulkan 驅動時改用 CPU。
+- CUDA 版改在安裝時從 NVIDIA 官方 redist 下載 cudart／cuBLAS（SHA256 驗證，3 次重試，失敗改用 GitHub 鏡像 `cuda-libs-12.6`），安裝程式不再內含這些 DLL。
+- 程式偵測缺少的 CUDA DLL，在「設定 → 辨識硬體」顯示原因並提供「下載 CUDA 元件」按鈕。
+- GPU 執行階段 DLL 改為延遲載入，缺少時以 stub 回報「無裝置」，程式不會當掉而改用 CPU。
+### 變更
+- CUDA 版的 C/C++ 部分也改用 clang-cl 編譯（CPU 後備路徑同樣加速）。
+- 「辨識硬體」選項：自動／GPU (CUDA / Vulkan)／CPU。
+
 ## 0.5.2-test — 2026-10-16
 ### 修正
 - 轉錄停在「轉寫中」：背景轉錄程序 panic 時會回報錯誤並重設；介面加入逾時保護。

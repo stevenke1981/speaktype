@@ -2,7 +2,7 @@ SpeakType 0.5.3
 
 ## 更新內容
 - **新增 Vulkan 版**：NVIDIA、AMD、Intel 顯示卡都能用 GPU 辨識，只需一般顯示卡驅動程式。
-- **CUDA 版瘦身**：安裝程式不再內含 cuBLAS／CUDA 執行階段，改在安裝時從 NVIDIA 官方下載（約 430 MB，SHA256 驗證），失敗會自動改用 NVIDIA 官方的 GitHub 鏡像；仍失敗則先用 CPU，之後可在設定中重新下載。
+- **CUDA 版瘦身**：安裝程式不再內含 cuBLAS／CUDA 執行階段，改在安裝時從 NVIDIA 官方下載（約 430 MB，SHA256 驗證），失敗會自動改用本專案 GitHub 上的鏡像（同樣驗證 SHA256）；仍失敗則先用 CPU，之後可在設定中重新下載。
 - **缺少 GPU 元件也能啟動**：GPU 版找不到驅動程式或 DLL 時自動改用 CPU，並在「設定 → 辨識硬體」顯示原因與目前使用的後端。
 - 「辨識硬體」設定：自動／GPU (CUDA / Vulkan)／CPU。
 - 延續 0.5.2：修正停在「轉寫中」、CPU 版約快 5 倍。
