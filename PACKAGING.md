@@ -1,7 +1,24 @@
 # SpeakType Packaging
 
-Release builds are CPU-only and produced by GitHub Actions (`.github/workflows/release.yml`):
-`cargo build --release`, then `scripts/build-installer.ps1` (Inno Setup) and `scripts/package-portable.ps1`.
+Release builds have separate CPU, CUDA and Vulkan jobs in GitHub Actions (`.github/workflows/release.yml`):
+`cargo build --release --locked --bins` (plus `--features cuda` or `--features vulkan`), then
+`scripts/build-installer.ps1` (Inno Setup) and `scripts/package-portable.ps1`.
+
+Published assets are preserved as separate CPU, CUDA and Vulkan groups (installer, ZIP,
+and their checksum manifest). Before publishing, `scripts/release_preflight.py`
+validates the local manifest and checks the entire remote group. An empty group
+may be uploaded. A complete group is downloaded publicly and compared with every
+local file, including the manifest; only identical bytes allow a successful no-op.
+A partial group, content conflict, or lookup/download error stops publication.
+The workflow never fills a partial group with newly rebuilt files, replaces old
+assets, or moves an existing tag. Releases for the same ref are serialized.
+
+If an upload is interrupted, keep the partial release for investigation and use a
+fresh version/tag for corrected artifacts. Do not delete old assets to bypass the
+guard. Repackaging the same source can change ZIP bytes and therefore intentionally
+fails against an existing group. Tags must match the Cargo package version (an
+optional prerelease suffix such as `-test` is allowed). Verify final public downloads
+against `SHA256SUMS.txt` / `SHA256SUMS-cuda.txt` / `SHA256SUMS-vulkan.txt` before announcing a release.
 
 For a local NVIDIA build use `cargo build --release --features cuda` (or `--features vulkan` for any GPU with the Vulkan SDK installed) and copy the CUDA runtime DLLs next to `speaktype.exe`; the installer picks up any `*.dll` in `target\release`.
 
