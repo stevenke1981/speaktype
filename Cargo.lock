@@ -5349,6 +5349,7 @@ dependencies = [
  "toml 0.8.23",
  "tray-icon",
  "whisper-rs",
+ "whisper-rs-sys",
  "windows-sys 0.61.2",
  "winresource",
 ]
