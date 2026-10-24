@@ -15,6 +15,7 @@ from urllib.request import Request, urlopen
 GROUPS = {
     "cpu": ("speaktype-setup-windows-x64.exe", "speaktype-windows-x64.zip", "SHA256SUMS.txt"),
     "cuda": ("speaktype-cuda-setup-windows-x64.exe", "speaktype-cuda-windows-x64.zip", "SHA256SUMS-cuda.txt"),
+    "vulkan": ("speaktype-vulkan-setup-windows-x64.exe", "speaktype-vulkan-windows-x64.zip", "SHA256SUMS-vulkan.txt"),
 }
 
 

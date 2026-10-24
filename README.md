@@ -8,7 +8,7 @@ Windows 上的本機語音輸入工具：按住快捷鍵說話，放開後文字
 
 📖 完整使用說明：[docs/USER_GUIDE.zh-TW.md](docs/USER_GUIDE.zh-TW.md)　｜　更新紀錄：[CHANGELOG.md](CHANGELOG.md)
 
-> 目前最新版本為測試版 **v0.5.1-test**（`test` 分支），只支援 Windows x64。
+> 目前最新版本為測試版 **v0.5.4**（`test` 分支），只支援 Windows x64。
 
 ## 下載與安裝
 
@@ -19,6 +19,16 @@ Windows 上的本機語音輸入工具：按住快捷鍵說話，放開後文字
 - `SHA256SUMS.txt`：檔案校驗碼。PowerShell 驗證：`Get-FileHash .\speaktype-setup-windows-x64.exe -Algorithm SHA256`
 
 Windows SmartScreen 可能提示「未知的發行者」（程式沒有程式碼簽章），按「其他資訊 → 仍要執行」。
+
+## 要選哪個版本（CPU / Vulkan / CUDA）
+
+| 版本 | 適合 | 安裝程式大小 |
+|---|---|---|
+| CPU（`speaktype-setup-windows-x64.exe`） | 所有電腦，最小 | 約 13 MB |
+| **Vulkan（`speaktype-vulkan-setup-windows-x64.exe`，有顯示卡建議用這個）** | 有 NVIDIA／AMD／Intel 顯示卡；會自動挑獨立顯示卡、略過虛擬顯示卡 | 約 17.7 MB |
+| CUDA（`speaktype-cuda-setup-windows-x64.exe`） | NVIDIA GTX 10 系列以上、驅動 R525+；安裝時另從 NVIDIA 官方下載約 430 MB | 見 Release 頁 |
+
+GPU 版在找不到驅動程式或元件時會自動改用 CPU；「設定 → 辨識硬體」可選 自動／Vulkan／CUDA／CPU，並顯示目前使用的後端。
 
 ## 快速開始
 
@@ -109,8 +119,8 @@ Windows SmartScreen 可能提示「未知的發行者」（程式沒有程式碼
 
 ## 常見問題
 
-- **下載模型顯示「存取被拒」**：請更新到 v0.5.1-test 以上，模型會改存到 `%LOCALAPPDATA%\SpeakType\models`。若設定中手動指定了 `C:\Program Files` 底下的資料夾，請改成使用者資料夾。也可能是防毒軟體鎖住下載中的 `.bin.part` 檔，可暫時排除該資料夾。
-- **一直停在「轉寫中」或很慢**：請更新到 v0.5.2-test 以上（CPU 版約快 5 倍，並有逾時保護）。有 NVIDIA 顯示卡請改裝 `speaktype-cuda` 版本，在「設定 → 辨識硬體」選自動或 GPU；需 NVIDIA 驅動程式 R525 以上。
+- **下載模型顯示「存取被拒」**：請更新到 v0.5.4 以上，模型會改存到 `%LOCALAPPDATA%\SpeakType\models`。若設定中手動指定了 `C:\Program Files` 底下的資料夾，請改成使用者資料夾。也可能是防毒軟體鎖住下載中的 `.bin.part` 檔，可暫時排除該資料夾。
+- **一直停在「轉寫中」或很慢**：請更新到 v0.5.4 以上（CPU 版約快 5 倍，並有逾時保護）。有 NVIDIA 顯示卡請改裝 `speaktype-cuda` 版本，在「設定 → 辨識硬體」選自動或 GPU；需 NVIDIA 驅動程式 R525 以上。
 - **按快捷鍵沒反應／文字沒有送出**：目標程式以系統管理員執行時，請也用系統管理員執行 SpeakType；確認設定中「啟用全域快捷鍵」已勾選。
 - **沒有聲音／辨識空白**：到「設定 → 輸入裝置」選對麥克風、看「即時音量」；Windows「設定 → 隱私權 → 麥克風」需允許桌面應用程式存取麥克風。
 - **防毒軟體誤報**：程式沒有簽章，且會模擬按鍵與讀寫剪貼簿，可能被標記；可用 `SHA256SUMS.txt` 確認檔案與 Release 一致。

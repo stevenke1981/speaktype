@@ -237,6 +237,22 @@ impl App {
         let Some(ui) = self.ui.upgrade() else { return };
         ui.set_capturing_hotkey(self.hotkey_capture);
         ui.set_level_testing(self.level_monitor.is_some());
+        {
+            use speaktype::modules::transcription::transcriber as t;
+            let build = match t::built_gpu_backend() {
+                Some(b) => format!("此版本：{} 版", b.label()),
+                None => "此版本：CPU 版".to_string(),
+            };
+            let status = match t::gpu_runtime_status() {
+                Ok(b) => format!("{} 可用", b.label()),
+                Err(reason) => reason,
+            };
+            let backend = t::current_backend(self.config.use_cuda);
+            let device = t::gpu_device_label(backend);
+            let using = if device.is_empty() { backend.label().to_string() } else { format!("{}（{device}）", backend.label()) };
+            ui.set_gpu_note(ss(format!("{build}｜{status}｜目前使用：{using}")));
+            ui.set_cuda_libs_missing(t::built_with_cuda() && !t::missing_cuda_runtime_dlls().is_empty());
+        }
         ui.set_input_level(self.input_level.clamp(0.0, 1.0));
         ui.set_latency_text(ss(self.last_latency.as_ref().map(|t| t.summary()).unwrap_or_default()));
         ui.set_last_app(ss(self.history.records().iter().find_map(|r| r.app.clone()).unwrap_or_default()));

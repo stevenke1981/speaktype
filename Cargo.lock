@@ -5329,7 +5329,7 @@ dependencies = [
 
 [[package]]
 name = "speaktype"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "arboard",
  "chrono",
@@ -5349,6 +5349,7 @@ dependencies = [
  "toml 0.8.23",
  "tray-icon",
  "whisper-rs",
+ "whisper-rs-sys",
  "windows-sys 0.61.2",
  "winresource",
 ]

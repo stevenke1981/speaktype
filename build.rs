@@ -8,7 +8,16 @@ fn main() {
     if std::env::var_os("CARGO_FEATURE_CUDA").is_some()
         && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
     {
-        println!("cargo:rustc-link-arg=/DELAYLOAD:nvcuda.dll");
+        for dll in ["nvcuda.dll", "cudart64_12.dll", "cublas64_12.dll", "cublasLt64_12.dll"] {
+            println!("cargo:rustc-link-arg=/DELAYLOAD:{dll}");
+        }
+        println!("cargo:rustc-link-lib=delayimp");
+    }
+    // Vulkan builds: vulkan-1.dll ships with GPU drivers, but not on every PC.
+    if std::env::var_os("CARGO_FEATURE_VULKAN").is_some()
+        && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
+    {
+        println!("cargo:rustc-link-arg=/DELAYLOAD:vulkan-1.dll");
         println!("cargo:rustc-link-lib=delayimp");
     }
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {

@@ -39,7 +39,7 @@ fn main() {
 
     let t = Instant::now();
     let transcriber = Transcriber::new(&model, gpu).expect("model");
-    println!("model_load_ms={:.0} backend={}", ms(t), transcriber.backend().label());
+    println!("model_load_ms={:.0} backend={} device={:?} vulkan_devices={:?}", ms(t), transcriber.backend().label(), speaktype::modules::transcription::transcriber::gpu_device_label(transcriber.backend()), speaktype::modules::transcription::transcriber::vulkan_devices());
     println!("system_info={}", whisper_rs::print_system_info().trim());
     let options = TranscribeOptions {
         language: config.transcription.language.clone(),
@@ -73,3 +73,5 @@ fn main() {
         );
     }
 }
+
+include!("../delay_hook.rs");

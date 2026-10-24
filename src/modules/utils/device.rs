@@ -39,6 +39,11 @@ static GPU_NAME: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new(
 /// Query the GPU name on a background thread. `wmic`/PowerShell take 0.3–2 s
 /// (and `wmic` no longer exists on Windows 11 24H2), so this must never run on
 /// the UI thread during startup.
+/// Adapter name from the OS, if already detected.
+pub fn cached_gpu_name() -> Option<String> {
+    GPU_NAME.get().cloned().flatten()
+}
+
 pub fn prefetch_gpu_name() {
     std::thread::spawn(|| {
         let _ = GPU_NAME.get_or_init(query_video_controller_name);
@@ -53,22 +58,20 @@ fn detect_gpu(use_cuda: bool) -> String {
         return if use_cuda {
             "未偵測到 GPU；CUDA 可能無法使用".to_string()
         } else {
-            "未啟用 CUDA".to_string()
+            "已選擇 CPU".to_string()
         };
     };
 
     if !use_cuda {
-        return format!("{name}：已偵測（CUDA 未啟用）");
+        return format!("{name}：已偵測（已選擇 CPU）");
     }
 
-    if name.to_ascii_lowercase().contains("nvidia") {
-        if crate::modules::transcription::transcriber::built_with_cuda() {
-            format!("{name}：CUDA 可用")
-        } else {
-            format!("{name}：已偵測（此版本為 CPU 版，請改裝 CUDA 版以使用 GPU）")
+    match crate::modules::transcription::transcriber::gpu_runtime_status() {
+        Ok(backend) => {
+            let dev = crate::modules::transcription::transcriber::gpu_device_label(backend);
+            format!("{}：{} 可用", if dev.is_empty() { name } else { dev }, backend.label())
         }
-    } else {
-        format!("{name}：已偵測，但未確認 CUDA 支援")
+        Err(reason) => format!("{name}：{reason}"),
     }
 }
 

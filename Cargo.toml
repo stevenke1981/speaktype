@@ -2,7 +2,7 @@
 
 [package]
 name = "speaktype"
-version = "0.5.3"
+version = "0.5.4"
 edition = "2021"
 
 [lints.rust]
@@ -34,6 +34,7 @@ cpal = "0.15"
 enigo = "0.1"
 arboard = "3.6"
 whisper-rs = { version = "0.16" }  # CPU by default; `--features cuda` / `vulkan` for GPU
+whisper-rs-sys = "=0.15.0"  # ggml device registry (exception-safe Vulkan enumeration)
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

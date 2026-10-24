@@ -152,6 +152,8 @@ export component MainWindow inherits Window {
 
     // ---- main page
     in property <bool> tray-available;
+    in property <string> gpu-note;
+    in property <bool> cuda-libs-missing;
     in property <bool> hidden-to-tray;
     in property <string> mic-status;
     in property <string> gpu-status;
@@ -536,9 +538,11 @@ export component MainWindow inherits Window {
                 Card {
                     H3 { text: "模型"; }
                     Small { text: root.models-dir-note; }
-                    HorizontalLayout { spacing: 8px; Text { text: "辨識硬體"; vertical-alignment: center; } ComboBox { model: ["自動（有 NVIDIA GPU 就用）", "GPU (CUDA)", "CPU"]; current-index <=> root.s.gpu-mode; selected => { root.settings-changed(); root.action("reload-model"); } horizontal-stretch: 1; } }
+                    HorizontalLayout { spacing: 8px; Text { text: "辨識硬體"; vertical-alignment: center; } ComboBox { model: ["自動（有 GPU 就用）", "Vulkan（建議：NVIDIA / AMD / Intel）", "CUDA（NVIDIA）", "CPU"]; current-index <=> root.s.gpu-mode; selected => { root.settings-changed(); root.action("reload-model"); } horizontal-stretch: 1; } }
                     HorizontalLayout { spacing: 8px; Body { text: "名稱"; vertical-alignment: center; } LineEdit { text <=> root.s.model-name; edited => { root.settings-changed(); } } }
                     HorizontalLayout { spacing: 8px; Body { text: "目錄"; vertical-alignment: center; } LineEdit { text <=> root.s.models-dir; edited => { root.settings-changed(); } } }
+                    Text { text: root.gpu-note; wrap: word-wrap; color: #888; }
+                    if root.cuda-libs-missing: HorizontalLayout { alignment: start; Button { text: "下載 CUDA 元件（約 430 MB）"; clicked => { root.action("download-cuda-libs"); } } }
                     HorizontalLayout { alignment: start; Button { text: "重新載入目前模型"; clicked => { root.action("reload-model"); } } }
                 }
                 Card {

@@ -8,7 +8,7 @@ Local voice typing for Windows: hold a hotkey, speak, release — the text appea
 
 📖 User guide: [docs/USER_GUIDE.en.md](docs/USER_GUIDE.en.md) · Changelog: [CHANGELOG.md](CHANGELOG.md)
 
-> Latest build: **v0.5.1-test** (prerelease from the `test` branch), Windows x64 only.
+> Latest build: **v0.5.4** (prerelease from the `test` branch), Windows x64 only.
 
 ## Download & install
 
@@ -19,6 +19,16 @@ From [Releases](https://github.com/stevenke1981/speaktype/releases):
 - `SHA256SUMS.txt` — checksums. Verify: `Get-FileHash .\speaktype-setup-windows-x64.exe -Algorithm SHA256`
 
 The binaries are not code-signed, so SmartScreen may warn ("More info → Run anyway").
+
+## Which build (CPU / Vulkan / CUDA)
+
+| Build | For | Notes |
+|---|---|---|
+| CPU `speaktype-setup-windows-x64.exe` | any PC | smallest (~13 MB) |
+| Vulkan `speaktype-vulkan-setup-windows-x64.exe` | NVIDIA / AMD / Intel GPUs | needs a normal GPU driver |
+| CUDA `speaktype-cuda-setup-windows-x64.exe` | NVIDIA GTX 10+ , driver R525+ | downloads ~430 MB CUDA runtime from NVIDIA at install time (SHA256-verified) |
+
+GPU builds fall back to the CPU when the driver/runtime is missing. Settings → recognition hardware: auto / Vulkan / CUDA / CPU.
 
 ## Quick start
 
@@ -103,8 +113,8 @@ See [docs/PERFORMANCE.md](docs/PERFORMANCE.md). NVIDIA users can build `cargo bu
 
 ## Troubleshooting
 
-- **Model download fails with "Access denied"**: update to v0.5.1-test or later (downloads go to `%LOCALAPPDATA%\SpeakType\models`). Don't set the model folder under `C:\Program Files`. Antivirus may also lock the `.bin.part` file.
-- **Stuck on "transcribing" / slow**: the planned v0.5.3 release includes the faster CPU build and timeout protection; update when it is available on the Releases page. With an NVIDIA GPU install the `speaktype-cuda` build and set Settings → recognition hardware to Auto or GPU (driver R525+).
+- **Model download fails with "Access denied"**: update to v0.5.4 or later (downloads go to `%LOCALAPPDATA%\SpeakType\models`). Don't set the model folder under `C:\Program Files`. Antivirus may also lock the `.bin.part` file.
+- **Stuck on "transcribing" / slow**: update to v0.5.4 (≈5× faster CPU build, timeout). With an NVIDIA GPU install the `speaktype-cuda` build and set Settings → recognition hardware to Auto or GPU (driver R525+).
 - **Hotkey works but no text appears**: if the target app runs as administrator, run SpeakType as administrator too.
 - **No audio**: pick the right microphone in Settings → Input device, and allow desktop apps to use the microphone in Windows privacy settings.
 
