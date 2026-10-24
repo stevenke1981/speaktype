@@ -116,9 +116,73 @@ pub fn vulkan_loader_present() -> bool {
 }
 
 /// Can the GPU backend compiled into this binary run here? Err = reason (zh-TW).
+/// User's requested backend: 0 auto, 1 Vulkan, 2 CUDA, 3 CPU (see GpuMode).
+static REQUESTED: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+pub fn set_requested_backend(code: u8) {
+    REQUESTED.store(code, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Vulkan devices ggml can see: (id, name, total VRAM bytes). Cached.
+pub fn vulkan_devices() -> Vec<(i32, String, usize)> {
+    static DEVICES: std::sync::OnceLock<Vec<(i32, String, usize)>> = std::sync::OnceLock::new();
+    DEVICES
+        .get_or_init(|| {
+            #[cfg(feature = "vulkan")]
+            {
+                if vulkan_loader_present() {
+                    return whisper_rs::vulkan::list_devices()
+                        .into_iter()
+                        .map(|d| (d.id, d.name, d.vram.total))
+                        .collect();
+                }
+            }
+            Vec::new()
+        })
+        .clone()
+}
+
+/// Prefer a discrete NVIDIA/AMD GPU, then Intel/other real GPUs; never a
+/// software or virtual adapter (llvmpipe, SwiftShader, "Virtual Display Driver").
+pub fn pick_vulkan_device(devices: &[(i32, String, usize)]) -> Option<(i32, String)> {
+    devices
+        .iter()
+        .filter_map(|(id, name, vram)| {
+            let l = name.to_ascii_lowercase();
+            if ["llvmpipe", "lavapipe", "swiftshader", "microsoft basic", "virtual", "software"]
+                .iter()
+                .any(|bad| l.contains(bad))
+            {
+                return None;
+            }
+            let rank = if ["nvidia", "geforce", "rtx", "quadro", "amd", "radeon"].iter().any(|v| l.contains(v)) {
+                2
+            } else {
+                1
+            };
+            Some((rank, *vram, *id, name.clone()))
+        })
+        .max_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)).then(b.2.cmp(&a.2)))
+        .map(|(_, _, id, name)| (id, name))
+}
+
+/// GPU device the Vulkan build would use, if any.
+pub fn selected_vulkan_device() -> Option<(i32, String)> {
+    pick_vulkan_device(&vulkan_devices())
+}
+
+/// Can the GPU backend compiled into this binary run here? Err = reason (zh-TW).
 pub fn gpu_runtime_status() -> Result<Backend, String> {
-    match built_gpu_backend() {
-        None => Err("此版本為 CPU 版；要用 GPU 請安裝 Vulkan 或 CUDA 版".to_string()),
+    let requested = REQUESTED.load(std::sync::atomic::Ordering::Relaxed);
+    let build = built_gpu_backend();
+    match (requested, build) {
+        (3, _) => return Err("已選擇 CPU".to_string()),
+        (1, Some(Backend::Cuda)) => return Err("已選擇 Vulkan，但這是 CUDA 版，改用 CPU；請安裝 Vulkan 版".to_string()),
+        (2, Some(Backend::Vulkan)) => return Err("已選擇 CUDA，但這是 Vulkan 版，改用 CPU；請安裝 CUDA 版".to_string()),
+        _ => {}
+    }
+    match build {
+        None => Err("此版本為 CPU 版；要用 GPU 請安裝 Vulkan 版（建議）或 CUDA 版".to_string()),
         Some(Backend::Cuda) => {
             if !nvidia_driver_present() {
                 return Err("找不到 NVIDIA 驅動程式 (nvcuda.dll)，改用 CPU".to_string());
@@ -131,12 +195,25 @@ pub fn gpu_runtime_status() -> Result<Backend, String> {
             }
         }
         Some(b) => {
-            if vulkan_loader_present() {
+            if !vulkan_loader_present() {
+                return Err("找不到 Vulkan 驅動程式 (vulkan-1.dll)，改用 CPU；請更新顯示卡驅動".to_string());
+            }
+            if selected_vulkan_device().is_some() {
                 Ok(b)
             } else {
-                Err("找不到 Vulkan 驅動程式 (vulkan-1.dll)，改用 CPU".to_string())
+                let seen: Vec<String> = vulkan_devices().into_iter().map(|d| d.1).collect();
+                Err(format!("找不到可用的 Vulkan GPU（偵測到：{}），改用 CPU", if seen.is_empty() { "無".to_string() } else { seen.join("、") }))
             }
         }
+    }
+}
+
+/// Human-readable device the GPU backend uses ("" for CPU).
+pub fn gpu_device_label(backend: Backend) -> String {
+    match backend {
+        Backend::Vulkan => selected_vulkan_device().map(|d| d.1).unwrap_or_default(),
+        Backend::Cuda => crate::modules::utils::device::cached_gpu_name().unwrap_or_default(),
+        Backend::Cpu => String::new(),
     }
 }
 
@@ -180,15 +257,23 @@ impl Transcriber {
         if let (true, Err(reason)) = (prefer_gpu, &gpu) {
             crate::modules::error::log_error("whisper backend", reason);
         }
-        let params = WhisperContextParameters { use_gpu, flash_attn: use_gpu, ..Default::default() };
+        let gpu_device = match backend {
+            Backend::Vulkan => selected_vulkan_device().map(|d| d.0).unwrap_or(0),
+            _ => 0,
+        };
+        // Flash attention: supported by ggml's CUDA and Vulkan backends; on the
+        // CPU it only slowed things down.
+        let params = WhisperContextParameters { use_gpu, flash_attn: use_gpu, gpu_device, ..Default::default() };
         crate::modules::error::log_error(
             "whisper backend",
             format!(
-                "backend={} (prefer_gpu={prefer_gpu}, build_gpu={:?}, gpu_status={:?}) threads={} system_info={}",
+                "backend={} device={:?} (prefer_gpu={prefer_gpu}, build_gpu={:?}, gpu_status={:?}, vulkan_devices={:?}) threads={} system_info={}",
                 backend.label(),
+                gpu_device_label(backend),
                 built_gpu_backend(),
                 gpu,
-                resolve_threads(0),
+                vulkan_devices(),
+                threads_for(backend, 0),
                 whisper_rs::print_system_info().trim()
             ),
         );
@@ -250,7 +335,7 @@ impl Transcriber {
         } else {
             params.set_language(Some(language));
         }
-        params.set_n_threads(resolve_threads(options.threads) as i32);
+        params.set_n_threads(threads_for(self.backend, options.threads) as i32);
         params.set_print_progress(false);
         params.set_print_special(false);
         params.set_print_realtime(false);
@@ -307,6 +392,17 @@ pub fn fast_audio_ctx(samples: usize) -> Option<i32> {
     }
 }
 
+/// On a GPU the encoder/decoder run on the device; a few CPU threads are
+/// enough for the rest and leave the cores free.
+pub fn threads_for(backend: Backend, requested: usize) -> usize {
+    let n = resolve_threads(requested);
+    if backend == Backend::Cpu || requested > 0 {
+        n
+    } else {
+        n.min(4)
+    }
+}
+
 pub fn resolve_threads(requested: usize) -> usize {
     if requested > 0 {
         return requested;
@@ -320,6 +416,30 @@ pub fn resolve_threads(requested: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{choose_backend, Backend};
+
+    #[test]
+    fn vulkan_device_prefers_discrete_real_gpu() {
+        use super::pick_vulkan_device as pick;
+        let d = |id: i32, n: &str, v: usize| (id, n.to_string(), v);
+        assert_eq!(pick(&[]), None);
+        assert_eq!(pick(&[d(0, "llvmpipe (LLVM 17)", 1)]), None);
+        assert_eq!(
+            pick(&[d(0, "Intel(R) UHD Graphics 770", 2 << 30), d(1, "NVIDIA GeForce RTX 3060 Ti", 8 << 30)]).unwrap().0,
+            1
+        );
+        assert_eq!(
+            pick(&[d(0, "Virtual Display Driver", 1 << 30), d(1, "Intel(R) Arc A380", 6 << 30)]).unwrap().0,
+            1
+        );
+        assert_eq!(pick(&[d(0, "AMD Radeon RX 6600", 8 << 30), d(1, "AMD Radeon(TM) Graphics", 512 << 20)]).unwrap().0, 0);
+    }
+
+    #[test]
+    fn gpu_uses_few_threads() {
+        assert!(super::threads_for(Backend::Vulkan, 0) <= 4);
+        assert_eq!(super::threads_for(Backend::Vulkan, 6), 6);
+        assert_eq!(super::threads_for(Backend::Cpu, 0), super::resolve_threads(0));
+    }
 
     #[test]
     fn backend_falls_back_to_cpu() {

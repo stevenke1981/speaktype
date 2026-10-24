@@ -410,6 +410,7 @@ impl AppConfig {
                     Ok(content) => match toml::from_str::<AppConfig>(&content) {
                         Ok(mut config) => {
                             config.migrate_defaults();
+                            config.apply_gpu_mode();
                             println!("[config] 已載入設定檔: {:?}", path);
                             return config;
                         }
@@ -570,8 +571,11 @@ pub fn dir_is_writable(dir: &std::path::Path) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum GpuMode {
+    /// Use this build's GPU backend when a usable device exists.
+    #[serde(alias = "gpu")]
     Auto,
-    Gpu,
+    Vulkan,
+    Cuda,
     Cpu,
 }
 
@@ -579,14 +583,16 @@ impl GpuMode {
     pub fn index(self) -> i32 {
         match self {
             GpuMode::Auto => 0,
-            GpuMode::Gpu => 1,
-            GpuMode::Cpu => 2,
+            GpuMode::Vulkan => 1,
+            GpuMode::Cuda => 2,
+            GpuMode::Cpu => 3,
         }
     }
     pub fn from_index(i: i32) -> Self {
         match i {
-            1 => GpuMode::Gpu,
-            2 => GpuMode::Cpu,
+            1 => GpuMode::Vulkan,
+            2 => GpuMode::Cuda,
+            3 => GpuMode::Cpu,
             _ => GpuMode::Auto,
         }
     }
@@ -600,6 +606,11 @@ impl AppConfig {
     pub fn set_gpu_mode(&mut self, mode: GpuMode) {
         self.gpu_mode = Some(mode);
         self.use_cuda = mode != GpuMode::Cpu;
+        self.apply_gpu_mode();
+    }
+    /// Tell the transcriber which backend the user asked for.
+    pub fn apply_gpu_mode(&self) {
+        crate::modules::transcription::transcriber::set_requested_backend(self.gpu_mode().index() as u8);
     }
 }
 
@@ -703,13 +714,15 @@ mod tests {
         assert_eq!(c.gpu_mode(), super::GpuMode::Auto);
         c.use_cuda = false;
         assert_eq!(c.gpu_mode(), super::GpuMode::Cpu);
-        c.set_gpu_mode(super::GpuMode::Gpu);
+        c.set_gpu_mode(super::GpuMode::Vulkan);
         assert!(c.use_cuda);
         let text = toml::to_string(&c).unwrap();
-        assert!(text.contains("gpu_mode = \"gpu\""));
+        assert!(text.contains("gpu_mode = \"vulkan\""));
         let back: super::AppConfig = toml::from_str(&text).unwrap();
-        assert_eq!(back.gpu_mode(), super::GpuMode::Gpu);
-        for m in [super::GpuMode::Auto, super::GpuMode::Gpu, super::GpuMode::Cpu] {
+        assert_eq!(back.gpu_mode(), super::GpuMode::Vulkan);
+        let legacy: super::GpuMode = serde_json::from_str("\"gpu\"").unwrap();
+        assert_eq!(legacy, super::GpuMode::Auto);
+        for m in [super::GpuMode::Auto, super::GpuMode::Vulkan, super::GpuMode::Cuda, super::GpuMode::Cpu] {
             assert_eq!(super::GpuMode::from_index(m.index()), m);
         }
     }

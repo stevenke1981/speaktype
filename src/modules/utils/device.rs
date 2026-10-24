@@ -39,6 +39,11 @@ static GPU_NAME: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new(
 /// Query the GPU name on a background thread. `wmic`/PowerShell take 0.3–2 s
 /// (and `wmic` no longer exists on Windows 11 24H2), so this must never run on
 /// the UI thread during startup.
+/// Adapter name from the OS, if already detected.
+pub fn cached_gpu_name() -> Option<String> {
+    GPU_NAME.get().cloned().flatten()
+}
+
 pub fn prefetch_gpu_name() {
     std::thread::spawn(|| {
         let _ = GPU_NAME.get_or_init(query_video_controller_name);
@@ -62,7 +67,10 @@ fn detect_gpu(use_cuda: bool) -> String {
     }
 
     match crate::modules::transcription::transcriber::gpu_runtime_status() {
-        Ok(backend) => format!("{name}：{} 可用", backend.label()),
+        Ok(backend) => {
+            let dev = crate::modules::transcription::transcriber::gpu_device_label(backend);
+            format!("{}：{} 可用", if dev.is_empty() { name } else { dev }, backend.label())
+        }
         Err(reason) => format!("{name}：{reason}"),
     }
 }

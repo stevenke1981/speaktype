@@ -247,7 +247,9 @@ impl App {
                 Ok(b) => format!("{} 可用", b.label()),
                 Err(reason) => reason,
             };
-            let using = t::current_backend(self.config.use_cuda).label();
+            let backend = t::current_backend(self.config.use_cuda);
+            let device = t::gpu_device_label(backend);
+            let using = if device.is_empty() { backend.label().to_string() } else { format!("{}（{device}）", backend.label()) };
             ui.set_gpu_note(ss(format!("{build}｜{status}｜目前使用：{using}")));
             ui.set_cuda_libs_missing(t::built_with_cuda() && !t::missing_cuda_runtime_dlls().is_empty());
         }
