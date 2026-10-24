@@ -28,7 +28,7 @@ The binaries are not code-signed, so SmartScreen may warn ("More info → Run an
 | Vulkan `speaktype-vulkan-setup-windows-x64.exe` | NVIDIA / AMD / Intel GPUs | needs a normal GPU driver |
 | CUDA `speaktype-cuda-setup-windows-x64.exe` | NVIDIA GTX 10+ , driver R525+ | downloads ~430 MB CUDA runtime from NVIDIA at install time (SHA256-verified) |
 
-GPU builds fall back to the CPU when the driver/runtime is missing. Settings → recognition hardware: Auto / GPU / CPU.
+GPU builds fall back to the CPU when the driver/runtime is missing. Settings → recognition hardware: auto / Vulkan / CUDA / CPU.
 
 ## Quick start
 

@@ -16,7 +16,7 @@
 | Vulkan `speaktype-vulkan-setup-windows-x64.exe` | NVIDIA / AMD / Intel GPUs | needs a normal GPU driver |
 | CUDA `speaktype-cuda-setup-windows-x64.exe` | NVIDIA GTX 10+ , driver R525+ | downloads ~430 MB CUDA runtime from NVIDIA at install time (SHA256-verified) |
 
-GPU builds fall back to the CPU when the driver/runtime is missing. Settings → recognition hardware: Auto / GPU / CPU.
+GPU builds fall back to the CPU when the driver/runtime is missing. Settings → recognition hardware: auto / Vulkan / CUDA / CPU.
 
 ## Download a model
 Main window → Model Center → pick a model (default `large-v3-turbo` q5_0, ~547 MB) → download. Downloads resume and are SHA256-checked when the source provides a hash. Location: `%LOCALAPPDATA%\SpeakType\models` (used automatically if the configured folder is not writable; existing models in old locations are still used).

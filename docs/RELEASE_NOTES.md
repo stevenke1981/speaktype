@@ -4,14 +4,15 @@ SpeakType 0.5.4
 - **新增 Vulkan 版**：NVIDIA、AMD、Intel 顯示卡都能用 GPU 辨識，只需一般顯示卡驅動程式。
 - **CUDA 版瘦身**：安裝程式不再內含 cuBLAS／CUDA 執行階段，改在安裝時從 NVIDIA 官方下載（約 430 MB，SHA256 驗證），失敗會自動改用本專案 GitHub 上的鏡像（同樣驗證 SHA256）；仍失敗則先用 CPU，之後可在設定中重新下載。
 - **缺少 GPU 元件也能啟動**：GPU 版找不到驅動程式或 DLL 時自動改用 CPU，並在「設定 → 辨識硬體」顯示原因與目前使用的後端。
-- 「辨識硬體」設定：自動／GPU (CUDA / Vulkan)／CPU。
+- **Vulkan 優化**：自動挑選獨立顯示卡（NVIDIA／AMD 優先，其次 Intel），略過「Virtual Display Driver」、llvmpipe 等虛擬／軟體裝置；找不到真正的 GPU 就改用 CPU 並記錄原因。GPU 上啟用 flash attention、模型載入後先暖機、重複使用辨識狀態，CPU 執行緒降為最多 4 條。
+- 「辨識硬體」設定：自動／Vulkan／CUDA／CPU，並顯示目前使用的後端與顯示卡名稱（舊設定「GPU」視為「自動」）。
 - 延續 0.5.2：修正停在「轉寫中」、CPU 版約快 5 倍。
 
 ## 要下載哪個版本
 | 你的電腦 | 下載 | 大小 |
 |---|---|---|
 | 不確定／沒有獨立顯示卡 | `speaktype-setup-windows-x64.exe`（CPU 版） | 約 13 MB |
-| 有 AMD／Intel／NVIDIA 顯示卡 | `speaktype-vulkan-setup-windows-x64.exe`（Vulkan 版） | 約 17.7 MB |
+| **有 NVIDIA／AMD／Intel 顯示卡（建議）** | `speaktype-vulkan-setup-windows-x64.exe`（Vulkan 版） | 約 17.7 MB |
 | 有 NVIDIA 顯示卡、想要最快 | `speaktype-cuda-setup-windows-x64.exe`（CUDA 版，安裝時另下載約 430 MB） | 見檔案列表 |
 
 每個版本都有免安裝 zip（`speaktype-*-windows-x64.zip`）。三種安裝程式裝在同一位置，互相覆蓋安裝尚未實機驗證。
